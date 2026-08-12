@@ -1,0 +1,28 @@
+{
+  "description": "Blocks a profile session from writing into the engine or the installed plugin cache. Rationale: docs/adr-010-engine-write-guard.md; the check itself: scripts/guard_engine_writes.py.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/migrate.py --hook",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/guard_engine_writes.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

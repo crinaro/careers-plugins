@@ -1,0 +1,30 @@
+{
+  "name": "jobsearch",
+  "description": "A job-search assistant: sweeps your mailbox and LinkedIn for replies and interview invitations, screens roles against your own compensation floors and geography, tracks every application and conversation, and drafts outreach in your voice. It never sends anything itself.",
+  "version": "0.19.0",
+  "author": {
+    "name": "Crinaro",
+    "email": "john@crinaro.ai"
+  },
+  "repository": "https://github.com/crinaro/careers-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "job-search",
+    "career",
+    "recruiting",
+    "outreach",
+    "pipeline"
+  ],
+  "metadata": {
+    "versioningPolicy": "Explicit releases; minor per behaviour change, patch per fix. Bump before any sync or push — an unbumped change ships nothing and looks like a broken install. Rationale: docs/adr-009-versioning-policy.md"
+  },
+  "mcpServers": {
+    "gmail-multi": {
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/gmail_mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}

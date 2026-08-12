@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "careers-plugins",
+  "description": "Career and job-search capabilities for Claude Code. Tools that help a person find their next role, and help a small agency support several people doing the same.",
+  "owner": {
+    "name": "Crinaro",
+    "email": "john@crinaro.ai"
+  },
+  "plugins": [
+    {
+      "name": "jobsearch",
+      "description": "A job-search assistant: sweeps your mailbox and LinkedIn for replies and interview invitations, screens roles against your own compensation floors and geography, tracks every application and conversation, and drafts outreach in your voice. It never sends anything itself.",
+      "author": {
+        "name": "Crinaro",
+    "email": "john@crinaro.ai"
+      },
+      "category": "productivity",
+      "source": "./plugins/jobsearch"
+    }
+  ]
+}

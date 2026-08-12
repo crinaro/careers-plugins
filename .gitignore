@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# ⭐ GENERATED ARTIFACTS ARE NOT ENGINE. `dashboard.html` and `dashboard_artifact.html` are
+# rendered FROM a profile's own data, so a committed copy is one person's pipeline — companies,
+# contacts, comp — shipped inside the engine to everyone who installs it. Two were tracked here
+# until 2026-08-09.
+dashboard.html
+dashboard_artifact.html
+dashboard_artifact_url.txt
+
+# Python
+__pycache__/
+*.pyc
+
+# Local pointers and logs — machine-specific by definition
+*.log
+.claude/settings.local.json

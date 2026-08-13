@@ -682,6 +682,23 @@ def main():
         if not args.hook:
             print("Install self-heal skipped: %s" % e, file=sys.stderr)
 
+    # ⭐⭐ AND THE RULEBOOK, for the same reason and in the same place. It installs into the
+    # profile as CLAUDE.md and loads at session start, so a stale copy is read as
+    # authoritative — this file's own rule. Nothing called install_rulebook.py from any hook,
+    # so the only thing keeping it current was somebody remembering: a live profile was found
+    # running 0.17.0 rules under a 0.21.0 engine. Its own envelope, so a failure here cannot
+    # cost the profile its migrations.
+    try:
+        import install_rulebook
+        rb_verdict, rb_lines = install_rulebook.refresh_if_stale(apply_it=not args.check)
+        if rb_lines:
+            print("jobsearch: rulebook (%s)" % rb_verdict)
+            print("\n".join(rb_lines))
+    except Exception as e:                     # noqa: BLE001
+        diag("migrate", verdict="rulebook-error", reason=type(e).__name__)
+        if not args.hook:
+            print("Rulebook refresh skipped: %s" % e, file=sys.stderr)
+
     try:
         profile = profile_from_cwd()
         if not profile:

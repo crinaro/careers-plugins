@@ -74,6 +74,66 @@ def installed_stamp(dest_file):
     return head[i + len(MARKER):].split("|")[0].strip()
 
 
+def refresh_if_stale(dest_dir=None, apply_it=True):
+    """Keep the installed rulebook current, unattended — returns (verdict, lines).
+
+    ⭐⭐ WHY THIS EXISTS: A RULEBOOK INSTALL WAS "AND THEN THE USER RUNS THIS SCRIPT".
+    That is the one thing this marketplace says a change may never be. Nothing called this
+    script from any hook, so the only thing keeping a profile's rulebook current was
+    somebody remembering — and on 2026-08-13 a live profile was found running rules from
+    **0.17.0 while the engine was 0.21.0**. Four minors of rules the sessions never read,
+    with no error anywhere, which is precisely the failure this file's own docstring names:
+    a stale rulebook is worse than an absent one, because it is read as authoritative.
+
+    Called from the SessionStart hook beside the migration and the install self-heal, so the
+    three things that must track the running version now do so together.
+
+    ⚠️ THE UNMANAGED CASE IS A REFUSAL, NOT A REPAIR. A CLAUDE.md with no provenance stamp
+    was written by someone, not by this script. Overwriting it unattended would be silent
+    data loss of the exact kind `SAFE APPLIES, DESTRUCTIVE REPORTS` forbids — so it says so
+    and changes nothing. Same for a symlink, for the same reason.
+    """
+    dest_dir = dest_dir or profile_root()
+    dest_file = os.path.join(dest_dir, "CLAUDE.md")
+    version = engine_version()
+
+    if not os.path.isdir(dest_dir):
+        return "no-profile", []
+    if os.path.islink(dest_file):
+        return "symlink", [
+            "  ⛔ %s is a SYMLINK — not replaced. Remove it and re-run install_rulebook.py."
+            % dest_file]
+
+    have = installed_stamp(dest_file)
+    if have == version:
+        return "current", []
+    if have == "":
+        return "unmanaged", [
+            "  ⚠️ %s was not installed by this plugin, so it was NOT replaced." % dest_file,
+            "     It may hold local edits. Move it aside and run install_rulebook.py to adopt",
+            "     the shipped rulebook, or leave it and accept that engine rules are not loaded."]
+
+    if not apply_it:
+        return ("missing" if have is None else "stale"), [
+            "  would install the rulebook into %s (have %s, engine %s)"
+            % (dest_file, have or "nothing", version)]
+
+    text = source_text()
+    if MARKER in text[:400]:
+        return "bad-source", ["  ⛔ the engine's RULEBOOK.md already carries a stamp; not installed"]
+    try:
+        tmp = dest_file + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            fh.write(STAMP % version + "\n" + text)
+        os.replace(tmp, dest_file)
+    except OSError as e:
+        return "failed", ["  ⚠️ could not write %s (%s) — rules stay at %s"
+                          % (dest_file, e, have or "none")]
+    return ("installed" if have is None else "refreshed"), [
+        "  rulebook %s -> %s. ⚠️ It loads at SESSION START, so THIS session still has the old one."
+        % (have or "none", version)]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)

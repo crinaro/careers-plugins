@@ -420,7 +420,7 @@ def scan(path, terms):
                     # tracked files while this gate reported CLEAN, because it was matching
                     # VALUES and a name had been baked into an IDENTIFIER. Requiring a
                     # non-alphanumeric neighbour instead treats `_`, `-`, `.` and `/` as the
-                    # separators they are, while still refusing to fire inside `johnson`.
+                    # separators they are, while still refusing to fire inside a longer word.
                     for m in re.finditer(r"(?<![A-Za-z0-9])%s(?![A-Za-z0-9])" % re.escape(w),
                                          line, re.IGNORECASE):
                         if any(s <= m.start() and m.end() <= e for s, e in allowed):
@@ -450,13 +450,39 @@ def main():
     # one with a friendly sentence — which is how this gate stayed green while checking nothing.
     # Report the two conditions SEPARATELY, because they have different causes and different
     # fixes, and a merged message sends you looking in the wrong place.
+    # ⭐⭐ THE VACUITY TEST IS "DID IT SCAN ANYTHING", NOT "IS EVERY FAMILY POPULATED".
+    #
+    # The family list is a taxonomy and a rename-guard; since #45 the files come from
+    # enumerating the tree, so an empty family no longer means an empty scan. Conflating
+    # the two broke the SHIPPED package: `docs/adr-*.md` are deliberately not published, so
+    # on a user's install the `docs` family matches nothing and this gate announced
+    # "THE GATE SCANNED NOTHING — this is a BROKEN GATE" while 100 files sat there waiting
+    # to be read. A gate that cries broken on every install is one nobody believes.
+    #
+    # So: nothing to scan is still a hard failure. An empty FAMILY is a note, and only a
+    # note, because the coverage line below now measures the thing that actually matters.
     empty = [name for name, pat in ENGINE_FAMILIES if not glob.glob(pat)]
-    if empty or not FAMILY_FILES or not ENGINE:
+    if not ENGINE:
         print("\n  !! THE GATE SCANNED NOTHING — this is a BROKEN GATE, not a clean tree.")
-        print("     engine families matching zero files: %s" % (", ".join(empty) or "ALL"))
-        print("     Either the engine root above is wrong, or a family was renamed and this")
-        print("     list was not. Do NOT read a green run as evidence of anything.")
+        print("     No tracked engine file was found under %s." % ENGINE_ROOT)
+        print("     Either the engine root above is wrong, or this is not an engine tree.")
+        print("     Do NOT read a green run as evidence of anything.")
         return 1
+    if empty:
+        # ⭐ AN EMPTY FAMILY MEANS DIFFERENT THINGS IN THE TWO TREES, so it is judged
+        # against which tree this is. In a CHECKOUT every family should be populated, and
+        # one that is not is a stale glob — the rename this guard exists to catch. In a
+        # SHIPPED PACKAGE `docs/adr-*.md` deliberately does not ship, so `docs` matching
+        # nothing is correct, and failing on it made the gate announce "BROKEN GATE" on
+        # every user's install while 100 files sat there waiting to be read.
+        #
+        # `tests/` never ships, so its presence is the marker for "this is a checkout".
+        is_checkout = os.path.isdir(os.path.join(ENGINE_ROOT, "tests"))
+        if is_checkout:
+            print("\n  !! FAMILY MATCHED NOTHING in a checkout: %s" % ", ".join(empty))
+            print("     Every family should be populated here, so a glob has gone stale.")
+            return 1
+        print("  note: family matching zero files in this package: %s" % ", ".join(empty))
 
     # ⭐⭐ COVERAGE IS STRUCTURAL, SO IT PRINTS BEFORE THE TERM CHECK AND ON EVERY PATH.
     # Printing it only after terms were found meant CI — which has no profile and returns

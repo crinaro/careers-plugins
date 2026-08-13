@@ -1,7 +1,7 @@
 {
   "name": "jobsearch",
   "description": "A job-search assistant: sweeps your mailbox and LinkedIn for replies and interview invitations, screens roles against your own compensation floors and geography, tracks every application and conversation, and drafts outreach in your voice. It never sends anything itself.",
-  "version": "0.20.0",
+  "version": "0.20.1",
   "author": {
     "name": "Crinaro",
     "email": "john@crinaro.ai"
@@ -16,7 +16,7 @@
     "pipeline"
   ],
   "metadata": {
-    "versioningPolicy": "Explicit releases; minor per behaviour change, patch per fix. Bump before any sync or push \u2014 an unbumped change ships nothing and looks like a broken install. Rationale: docs/adr-009-versioning-policy.md"
+    "versioningPolicy": "Explicit releases; minor per behaviour change, patch per fix. Bump before any sync or push — an unbumped change ships nothing and looks like a broken install. Rationale: docs/adr-009-versioning-policy.md"
   },
   "mcpServers": {
     "gmail-multi": {

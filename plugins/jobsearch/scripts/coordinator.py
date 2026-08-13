@@ -277,8 +277,10 @@ def main():
     rule("4. GATES — is the machinery sound?")
     for name, label in (("validate_data.py", "data integrity"),
                         ("check_rule_homes.py", "no rule lost / CLAUDE.md budget"),
-                        ("check_profile_leakage.py", "config is single-source"),
-                        ("test_checks.py", "regression suite")):
+                        ("check_profile_leakage.py", "config is single-source")):
+        # ⚠️ test_checks.py is NOT here. It is the maintainer regression suite and does not
+        # ship, so on an installed plugin this checklist reported it FAILING every run with
+        # no way to clear it (#1). A gate a user cannot satisfy is not a gate.
         rc = subprocess.run([sys.executable, os.path.join(ENGINE_SCRIPTS, name)],
                             capture_output=True, text=True).returncode
         print("  %-26s %s" % (label, "OK" if rc == 0 else "❌ FAILING — fix before writing"))

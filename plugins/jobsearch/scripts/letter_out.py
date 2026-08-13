@@ -78,7 +78,7 @@ def set_mode(mode):
     p = _config_path()
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(cfg, fh, indent=2)
+        json.dump(cfg, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     os.replace(tmp, p)          # atomic — a partial write would destroy the whole config
     print("Cover-letter output mode set to %r." % mode)

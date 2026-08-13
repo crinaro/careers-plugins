@@ -148,7 +148,7 @@ def write_stamp_record(profile, version, attempt):
         doc["last_attempt"] = prior
     try:
         with open(os.path.join(profile, STAMP), "w", encoding="utf-8") as fh:
-            json.dump(doc, fh, indent=1, sort_keys=True)
+            json.dump(doc, fh, indent=1, sort_keys=True, ensure_ascii=False)
             fh.write("\n")
         return True, None
     except OSError as e:
@@ -641,7 +641,11 @@ def m_0_20_0(profile, apply_it):
     try:
         tmp = path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(cfg, fh, indent=2)
+            # ⚠️ ensure_ascii=False. The default escapes every non-ASCII character, so a
+            # one-key rename rewrote 74 unrelated lines of a HAND-EDITED file as \uXXXX
+            # escapes — a diff its owner cannot review, and characters they typed coming
+            # back as escape sequences (#3).
+            json.dump(cfg, fh, indent=2, ensure_ascii=False)
             fh.write("\n")
         os.replace(tmp, path)
     except OSError as e:

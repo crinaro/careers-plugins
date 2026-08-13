@@ -58,7 +58,7 @@ def _save(data):
     p = _user_json_path()
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2)
+        json.dump(data, fh, indent=2, ensure_ascii=False)
         fh.write("\n")
     os.replace(tmp, p)          # atomic: a partial write would destroy the profile's identity
 

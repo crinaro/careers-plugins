@@ -57,7 +57,7 @@ MARKERS = (os.path.join(".claude-plugin", "marketplace.json"),
 CACHE = os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
 
 # The install manifests are the TAMPER RECORD for every installed plugin (adr-014). Hand-editing
-# one erases the very evidence `check_install.py` exists to read — and it was hand-"repaired"
+# one erases the very evidence the install verification exists to read — and it was hand-"repaired"
 # twice on 2026-08-11 before the mechanical self-heal existed. The one sanctioned writer is
 # `heal_install.py`, which runs hook-side (not through these tools) and only rewrites a mismatch
 # EXPLAINED by a version move; an unexplained mismatch must stay loud until a human decides.
@@ -167,7 +167,7 @@ def main():
                 "⛔ BLOCKED: that is an install manifest — the tamper record for an installed "
                 "plugin.\n\n"
                 "   %s\n\n"
-                "   Hand-editing it erases the evidence `check_install.py` exists to read. A\n"
+                "   Hand-editing it erases the evidence the install verification exists to read. A\n"
                 "   mismatch EXPLAINED by a version move heals itself at session start\n"
                 "   (scripts/heal_install.py, adr-014); an UNEXPLAINED one is corruption or\n"
                 "   tampering and must stay loud until a human decides. Neither is fixed here.\n"
@@ -218,9 +218,8 @@ def main():
                 "   exists because engine changes once landed mid-run while a scheduled run was\n"
                 "   reading the same files.\n\n"
                 "   ⭐ ROUTE IT INSTEAD, then carry on with what you were doing:\n\n"
-                "     python3 %s/scripts/intake.py --add \\\n"
-                "       --plugin jobsearch --severity <high|medium|low> \\\n"
-                "       --title \"...\" --symptom \"...\" --evidence \"...\" --owner unsure\n\n"
+                "     ~/.claude/jobsearch/run report_issue.py \\\n"
+                "       --title \"...\" --symptom \"...\" --evidence \"...\"\n\n"
                 "   State the bug as the RULE that misbehaved, never the instance — that queue\n"
                 "   refuses personal data, and git history is permanent. See %s/docs/intake.md\n"
                 % (target_abs, engine, cwd, banner.rstrip("\n"), engine, engine))

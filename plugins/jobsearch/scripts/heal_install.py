@@ -8,7 +8,7 @@ Neither `claude plugin install` nor `claude plugin update` rewrites the per-plug
 including a full uninstall-then-reinstall cycle that left the manifest byte-identical (same mtime,
 same `createdAt`, same file count). `installed_plugins.json` moves correctly — `installPath` and
 `gitCommitSha` both update — while the manifest keeps describing the PREVIOUS version. The
-release gate `check_install.py` then reports drift on every release, and until this script the
+release gate `the install verification` then reports drift on every release, and until this script the
 repair was a hand edit — the exact "and then someone runs a command" failure the rulebook forbids.
 
 So the engine heals it itself, at session start, from the same `SessionStart` hook that already
@@ -18,7 +18,7 @@ INSTALL current with the running version.
 ## ⭐⭐ THE SCOPE RULE: HEAL ONLY THE MISMATCH THAT IS EXPLAINED
 
 The manifest exists to detect tampering and corruption. Regenerating whenever hashes mismatch
-would turn `check_install.py` into a script that erases its own failure. The one mismatch this
+would turn `the install verification` into a script that erases its own failure. The one mismatch this
 script repairs is the installer defect, stated as a testable condition:
 
     EXPLAINED (healed)      the manifest's recorded hash of `.claude-plugin/plugin.json` differs
@@ -72,7 +72,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from _diag import log as diag
 
-# Mirror scripts/check_install.py in the marketplace repo: transient files the installer never
+# Mirror scripts/the install verification in the marketplace repo: transient files the installer never
 # records. Recording them would guarantee false drift on the very next session.
 IGNORE_DIRS = ("__pycache__", ".git", ".in_use")
 IGNORE_SUFFIX = (".pyc", ".pyo")
@@ -174,7 +174,7 @@ def _heal(root, plugins_dir, apply_it):
         return "no-manifest", [
             "  ⚠️ no readable install manifest at %s" % man_path,
             "     First install writes one, so its absence is anomalous — nothing was invented",
-            "     to replace it. `scripts/check_install.py` (marketplace repo) shows the state;",
+            "     to replace it. `scripts/the install verification` (marketplace repo) shows the state;",
             "     a reinstall of the plugin is the only writer with install-time authority."]
 
     disk = tree_hashes(root)
@@ -198,7 +198,7 @@ def _heal(root, plugins_dir, apply_it):
             "version %s)." % (len(drifted), len(missing), len(vanished), ver or "unknown"),
             "     Same-version drift is corruption or tampering, not the installer defect, so",
             "     nothing was rewritten — this stays loud on purpose (adr-014). Compare with",
-            "     `scripts/check_install.py` in the marketplace repo; a reinstall of the plugin",
+            "     `scripts/the install verification` in the marketplace repo; a reinstall of the plugin",
             "     is the honest repair once the cause is understood."]
 
     if not apply_it:

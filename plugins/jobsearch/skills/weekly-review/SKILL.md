@@ -66,6 +66,7 @@ Run the weekly strategy review of the candidate's search. Read `CLAUDE.md` first
 ~/.claude/jobsearch/run inbox.py                      # drain what background runs queued
 ~/.claude/jobsearch/run check_stale_claims.py         # decayed claims — verify against the machine
 ~/.claude/jobsearch/run check_followups.py            # silent threads
+~/.claude/jobsearch/run check_action_claims.py        # a hand-authored ask the data already answered (#43)
 ~/.claude/jobsearch/run check_sections.py             # focus.md invariants
 ~/.claude/jobsearch/run validate_data.py              # schema · enums · referential integrity
 ~/.claude/jobsearch/run channels_due.py               # which sources are due
@@ -105,7 +106,7 @@ run must leave nothing local.**
 > capability's defects belong on that capability's tracker.** Dispatch **`engine-reporter`**: it
 > reads what actually happened, checks the plugin's open issues so it does not duplicate one, and
 > hands back ready-to-file proposals. **Confirm with the candidate, then file with the
-> marketplace's `intake.py`.** `check_process_debt.py` still runs and still exits 1 on a leftover
+> `report_issue.py`.** `check_process_debt.py` still runs and still exits 1 on a leftover
 > local section, so a half-migrated profile fails loudly instead of quietly keeping two lists.
 
 Every item leaves exactly one of four ways:
@@ -161,7 +162,6 @@ daily run that should have written it missed something — log that, don't just 
 
 ## 5. TESTS AND SEPARATION
 
-- `~/.claude/jobsearch/run test_checks.py` — regression tests anchored to real shipped bugs. **When you
   fix a bug, add a case** rather than only writing a paragraph. A rule in prose is re-interpreted
   every run; a test fails loudly and for free.
 - `~/.claude/jobsearch/run check_profile_leakage.py` — `config.json` is the single source of truth for

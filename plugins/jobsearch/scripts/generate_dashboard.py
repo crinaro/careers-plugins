@@ -190,7 +190,12 @@ YOUR_MOVE_RE = r"^##\s*(?:⚡\s*)?Your Move.*?$(.*?)(?=^##\s|\Z)"
 
 
 def parse_your_move(md: str):
-    """Extract the '## Your Move' section's numbered items as (title, ask) tuples.
+    """Extract the '## Your Move' section's numbered items as (title, ask, opp_id) tuples.
+
+    (Said "(title, ask)" until 2026-08-13; the third element arrived with the {opp:<id>}
+    tag below and the docstring was never updated. A caller trusting it unpacked two and
+    crashed — check_action_claims.py, GitHub #43.)
+
     This section is what's actually waiting on the candidate — it renders as its own panel at
     the top of the dashboard so priority decisions aren't buried in the focus prose."""
     m = re.search(YOUR_MOVE_RE, md, re.M | re.S)
@@ -932,6 +937,46 @@ def your_move_roles_from_jsonl():
     return [(t, a, oid) for (t, a, oid, _d) in items]
 
 
+def your_move_channels_from_jsonl():
+    """Relationship follow-ups on Your Move are a FILTERED VIEW of data/channels.jsonl —
+    GitHub #44.
+
+    ⭐⭐ THE SAME CUTOVER THAT ALREADY FIXED ROLES. Role decisions were hand-maintained prose
+    in focus.md until 2026-07-20, went stale, and were cut over to a filtered view of the
+    opportunities data. The other half of this surface — cross-cutting asks, of which
+    channel and relationship follow-ups are the clearest example — was left typed by hand,
+    so it kept the defect the cutover removed: an item asserting an action is still pending
+    after the operating store already records it done, expelled only when a human notices.
+
+    ⭐ NO NEW FIELD, AND NO MIGRATION. `channels.jsonl` already carries `next_touch`
+    {date, time, note} — a relationship call not tied to a role — and a `next_touch` IS by
+    definition an action the candidate takes. Adding a parallel `next_action_owner` here
+    would be inventing a second way to say what the record already says, which is the very
+    duplication this issue is about.
+
+    When the touch happens, the run clears or advances `next_touch` and the item leaves this
+    list because the filter no longer matches — not because somebody remembered to delete a
+    line of prose. Returns render_your_move's (title, ask, opp_id) shape; opp_id is None
+    because a relationship follow-up has no job posting to link to.
+    """
+    items = []
+    for c in load_jsonl("channels.jsonl"):
+        nt = c.get("next_touch")
+        if not isinstance(nt, dict) or not nt.get("date"):
+            continue
+        label = c.get("label") or c.get("id") or "a channel"
+        when = str(nt.get("date"))
+        bits = [b for b in (nt.get("time"), nt.get("note")) if b]
+        ask = "Due %s. %s" % (when, " · ".join(str(b) for b in bits)) if bits \
+            else "Due %s." % when
+        rel = c.get("relationship_status")
+        if rel:
+            ask += " (%s)" % rel
+        items.append(("🤝 %s" % label, ask, None, when))
+    items.sort(key=lambda t: t[3])
+    return [(t, a, oid) for (t, a, oid, _d) in items]
+
+
 def main():
     # `opps = read("opportunities.md")` lived here until 2026-08-02 and was DEAD — the sourced
     # pipeline has been read from data/opportunities.jsonl since the 2026-07-20 cutover, and the
@@ -1016,11 +1061,18 @@ def main():
     )
 
     ym_links = {o["id"]: best_link(o) for o in load_jsonl("opportunities.jsonl")}
-    # Your Move = auto-generated role decisions (a filtered view of the opportunities
-    # data) FIRST, then the hand-maintained cross-cutting asks from focus.md (ATS-portal
-    # check, consulting, cover-letter measurement) that don't map to a single opp.
+    # Your Move, in order: role decisions derived from opportunities.jsonl, then relationship
+    # follow-ups derived from channels.jsonl (GitHub #44), then whatever cross-cutting asks
+    # remain hand-authored in focus.md.
+    #
+    # ⭐ THE HAND-AUTHORED TAIL IS NOW THE EXCEPTION, NOT HALF THE SURFACE. Every item in the
+    # first two groups is incapable of going stale: it is a filter over a record, so it
+    # disappears when the record changes. What is left in focus.md should be only asks that
+    # are genuinely unmodelled anywhere — and those remain a standing drift risk, which is
+    # what check_action_claims.py (#43) exists to catch as a backstop.
     role_decisions = your_move_roles_from_jsonl()
-    your_move = role_decisions + your_move
+    channel_touches = your_move_channels_from_jsonl()
+    your_move = role_decisions + channel_touches + your_move
     your_move_html = render_your_move(your_move, ym_links)
     thisweek_html = render_focus(thisweek_focus)
 

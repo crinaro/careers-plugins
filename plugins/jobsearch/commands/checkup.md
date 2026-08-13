@@ -73,6 +73,7 @@ working well.
 ~/.claude/jobsearch/run funnel_report.py
 ~/.claude/jobsearch/run channels_due.py
 ~/.claude/jobsearch/run check_followups.py
+~/.claude/jobsearch/run check_action_claims.py
 ~/.claude/jobsearch/run check_stale_claims.py
 ```
 
@@ -119,7 +120,7 @@ is per item, never a blanket.** Filing directly with the command below is equall
 one item is involved:
 
 ```bash
-python3 <careers-plugins>/scripts/intake.py --add --dry-run …   # read it back first
+~/.claude/jobsearch/run report_issue.py --title … --symptom …   # read it back first
 ```
 
 ⚠️ **State each bug as the RULE that misbehaved, never the instance.** The tool refuses a

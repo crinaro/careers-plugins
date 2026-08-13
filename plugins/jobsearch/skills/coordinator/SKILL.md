@@ -126,7 +126,7 @@ half of the check is conclusive alone, which is why both are here: the script se
 cannot see the scheduler; you can see the scheduler and must not trust it by itself.
 
 **If they disagree, that is an ENGINE issue, not a quiet day.** Route it to `engine-reporter`
-— **dispatch the agent, do not hand-build an `intake.py` command.** That agent checks the tracker
+— **dispatch the agent, do not hand-build a `report_issue.py` command.** That agent checks the tracker
 for an existing issue first, and a second issue for a known defect splits the discussion across
 two threads where neither has the whole picture.
 `~/.claude/jobsearch/run` — and `python3 <careers-plugins>/plugins/jobsearch/scripts/_diag.py`'s
@@ -241,7 +241,7 @@ in `agents/` stops meaning anything.
 missing, a gate is broken — **do not fix it here.** Route it to the marketplace maintenance team:
 
 ```bash
-python3 <careers-plugins>/scripts/intake.py --add --plugin jobsearch \
+~/.claude/jobsearch/run report_issue.py \
   --severity <high|medium|low> --title "..." --symptom "..." --evidence "..." --owner unsure
 ```
 

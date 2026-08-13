@@ -64,7 +64,7 @@ This repo is the single source of truth for the candidate's executive job search
 - **No** → it is STATE: This Week (a scheduled commitment) · role/thread state (the JSONL) ·
   Network. **⭐ If it is the ENGINE's fault — a script, a gate, a skill, an agent — it is NOT
   state and NOT a local to-do: it is an ISSUE on the plugin's repository.** Propose it with the
-  `engine-reporter` agent, file it with the marketplace's `intake.py` after the candidate agrees.
+  `engine-reporter` agent, file it with `report_issue.py` after the candidate agrees.
   *(`Process → 🔧 Open` and its dashboard tab were retired 2026-08-06. A capability's defects
   belong on that capability's tracker; a local copy is a second place to look and the one that
   goes stale.)*
@@ -83,7 +83,7 @@ EXPEL RESOLVED ITEMS** the moment they're answered — never rewrite one into a 
 status line in place · **a Your Move line must read as a question or an imperative aimed at
 the candidate**; if it reads as a status report it is in the wrong section. `check_sections.py` enforces
 this. **⭐ The weekly run drains ENGINE observations by FILING them** — `engine-reporter` proposes,
-the candidate agrees, `intake.py` files. Nothing engine-related stays local; a local copy is a
+the candidate agrees, `report_issue.py` files. Nothing engine-related stays local; a copy is a
 second place to look and the one that goes stale.
 
 ## ⭐ PROFILE vs ENGINE — `config.json` / `user.json` HOLD THE VALUES
@@ -310,7 +310,7 @@ plugin **cache** (a copy — the edit appears to work and is destroyed by the ne
 open on any unexpected condition, because a guard that breaks all editing is worse than the
 mistake it prevents. **It is a guard, not a sandbox: the behavioural rule is still the first line.**
 
-**Found an engine bug? Route it with the marketplace's `intake.py` and carry on searching.** The
+**Found an engine bug? Route it with `report_issue.py` and carry on searching.** The
 exact command is in that repo's `docs/intake.md` — and the hook prints it for you at the moment it
 blocks, which is when you need it. It is deliberately not repeated here: a command written twice
 is a command that disagrees with itself later.
@@ -388,7 +388,6 @@ broken one reads downstream as "no matching proof points" — same as having non
 - `check_process_debt.py --weekly` — the zero-open-items invariant.
 - `check_profile_leakage.py` — `config.json` is the single source of truth for values.
 - `parse_ics.py` · `parse_meeting_mail.py` — decode a meeting time. `generate_dashboard.py`.
-- `test_checks.py` — the regression suite. **When you fix a bug, add a case here.**
 - `push_init.sh` / `push.sh` — mint and use this session's push token. `wake_chrome.sh` — a
   LaunchAgent pre-wakes Chrome at 06:58/13:58.
 

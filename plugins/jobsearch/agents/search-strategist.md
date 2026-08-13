@@ -17,7 +17,7 @@ model: fable
 
 **RUNS (do not hand-derive what a script computes):**
 `~/.claude/jobsearch/run check_process_debt.py --weekly` · `check_stale_claims.py` ·
-`check_followups.py` · `check_profile_leakage.py` · `test_checks.py`
+`check_followups.py` · `check_profile_leakage.py`
 
 ⭐ **`funnel_report.py` IS RUN BY THE CALLER, NOT HERE — its output is handed to you as EVIDENCE.**
 `weekly-review` step 0 already runs it, along with most of the list above. Re-running them inside

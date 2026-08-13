@@ -19,7 +19,8 @@ model: sonnet
 `focus.md` · `git log --stat` on the profile · **the specific engine file you are accusing** —
 never the engine wholesale.
 
-**RUNS:** `python3 <careers-plugins>/scripts/intake.py` — the OPEN issues, to avoid proposing a
+**RUNS:** `~/.claude/jobsearch/run report_issue.py` — it ships WITH the plugin and files to the
+public marketplace tracker named in `plugin.json`. To avoid proposing a
 duplicate. `~/.claude/jobsearch/run check_stale_claims.py`.
 
 **DOES NOT READ:** `resume.md` · `projects.md` · `drafts.md` · `cover_letters.md` ·
@@ -141,8 +142,8 @@ helpful extra, it is a permanent record the owner did not agree to.
 When you are filing:
 
 ```bash
-python3 <careers-plugins>/scripts/intake.py --add --dry-run …   # read the body back first
-python3 <careers-plugins>/scripts/intake.py --add …
+~/.claude/jobsearch/run report_issue.py --title … --symptom …        # read the body back first
+~/.claude/jobsearch/run report_issue.py --title … --symptom … --file
 ```
 
 **`--dry-run` first, always.** You cannot edit an issue away once it is filed, and the body is the

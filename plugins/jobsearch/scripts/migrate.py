@@ -86,11 +86,41 @@ def ver(s):
 
 
 def read_stamp(profile):
+    """The schema version this profile has been migrated to.
+
+    ⭐ ACCEPTS BOTH SHAPES. The stamp was a bare version string; it is now a small JSON
+    record that also carries the last ATTEMPT (see write_stamp). A profile written by an
+    older engine still holds the bare string, and must keep working untouched — the record
+    is an addition, never a precondition."""
     try:
         with open(os.path.join(profile, STAMP), encoding="utf-8") as fh:
-            return fh.read().strip()
+            raw = fh.read().strip()
     except OSError:
         return "0.0.0"
+    if raw.startswith("{"):
+        try:
+            return str(json.loads(raw).get("schema") or "0.0.0")
+        except ValueError:
+            return "0.0.0"
+    return raw or "0.0.0"
+
+
+def read_attempt(profile):
+    """The last migration ATTEMPT, or None if this profile has never recorded one.
+
+    ⭐⭐ THIS IS THE POINT OF GitHub #41. The stamp recorded only the version ACHIEVED, so
+    `nothing to migrate` and `never looked` were the same observation — a stamp eleven
+    minors behind, a hook present the whole time, and no way to tell whether it had ever
+    run. An attempt record makes the difference visible: a run that found nothing still
+    writes one, so an ABSENT record means the hook genuinely never fired."""
+    try:
+        with open(os.path.join(profile, STAMP), encoding="utf-8") as fh:
+            raw = fh.read().strip()
+        if raw.startswith("{"):
+            return json.loads(raw).get("last_attempt") or None
+    except (OSError, ValueError):
+        pass
+    return None
 
 
 def write_stamp(profile, version):
@@ -101,12 +131,52 @@ def write_stamp(profile, version):
     migrations forever, with nothing anywhere saying so. Returns (ok, error) instead — the
     caller in main() is responsible for being LOUD about a failure; this function only reports
     one, it never hides it."""
+    return write_stamp_record(profile, version, None)
+
+
+def write_stamp_record(profile, version, attempt):
+    """Write the stamp, optionally recording what the last attempt DID.
+
+    ⭐ `attempt` is written even when nothing needed doing — that is the whole value. A run
+    that found nothing to do leaves `{"result": "no-op"}`, so a MISSING record means the
+    migration never ran at all, which is the condition #41 could not distinguish."""
+    doc = {"schema": version}
+    prior = read_attempt(profile)
+    if attempt is not None:
+        doc["last_attempt"] = attempt
+    elif prior is not None:
+        doc["last_attempt"] = prior
     try:
         with open(os.path.join(profile, STAMP), "w", encoding="utf-8") as fh:
-            fh.write(version)
+            json.dump(doc, fh, indent=1, sort_keys=True)
+            fh.write("\n")
         return True, None
     except OSError as e:
         return False, e
+
+
+def attempt_record(engine, result, detail=""):
+    import datetime
+    rec = {"at": datetime.datetime.now().replace(microsecond=0).isoformat(),
+           "engine": engine, "result": result}
+    if detail:
+        rec["detail"] = detail[:200]
+    return rec
+
+
+def record_noop(profile, engine):
+    """Record that a migration run happened and found nothing to do.
+
+    ⚠️ RATE-LIMITED ON PURPOSE. The profile is usually a git repository, and stamping every
+    single SessionStart would put a one-line commit's worth of churn in the user's own
+    history for the rest of time. Once per (engine version, day) is enough to answer the
+    only question this record exists for — did it EVER run — without becoming noise."""
+    prior = read_attempt(profile) or {}
+    today = attempt_record(engine, "no-op")["at"][:10]
+    if prior.get("engine") == engine and str(prior.get("at", ""))[:10] == today:
+        return True, None
+    return write_stamp_record(profile, read_stamp(profile),
+                              attempt_record(engine, "no-op"))
 
 
 def m_0_4_0(profile, apply_it):
@@ -533,8 +603,56 @@ def m_0_19_0(profile, apply_it):
                   "renamed, moved, or deleted." % len(planned))
 
 
+def m_0_20_0(profile, apply_it):
+    """0.20.0 — a config KEY that names the owner becomes generic (GitHub issue #46).
+
+    `compensation.standout_exception_requires_<owner>` carries the owner's first name in the
+    KEY. The rulebook's fixture rule is explicit that only structure crosses over and every
+    string is synthesized *because even map keys can be personal data* — and this one reached
+    a public repository inside the generated test fixture, where the purity gate could not
+    see it: the gate matched VALUES, and `\\b` treats `_` as a word character, so a name
+    inside an identifier was invisible to it. Both halves are fixed (#45); this is the data.
+
+    ⭐ PRESERVE, THEN TRANSFORM. The value is carried across before the old key is removed,
+    so a profile that had it set to false keeps false. Nothing in the engine reads this key
+    today, which is what makes the rename safe rather than a behaviour change.
+
+    Idempotent: a profile already carrying the new key, or neither key, is a no-op.
+    """
+    path = os.path.join(profile, "config.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except (OSError, ValueError):
+        return True, ""
+    comp = cfg.get("compensation")
+    if not isinstance(comp, dict):
+        return True, ""
+    old = [k for k in comp if k.startswith("standout_exception_requires_")
+           and k != "standout_exception_requires_owner"]
+    if not old:
+        return True, ""
+    if not apply_it:
+        return True, ("  would rename %d compensation key(s) that name the owner to "
+                      "`standout_exception_requires_owner`" % len(old))
+    for k in old:
+        comp.setdefault("standout_exception_requires_owner", comp[k])
+        del comp[k]
+    try:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(cfg, fh, indent=2)
+            fh.write("\n")
+        os.replace(tmp, path)
+    except OSError as e:
+        return False, "  could not rewrite config.json: %s" % e
+    return True, ("  renamed %d compensation key(s) naming the owner to "
+                  "`standout_exception_requires_owner`" % len(old))
+
+
 MIGRATIONS = (("0.4.0", m_0_4_0), ("0.13.0", m_0_13_0), ("0.14.0", m_0_14_0),
-              ("0.17.0", m_0_17_0), ("0.18.0", m_0_18_0), ("0.19.0", m_0_19_0))
+              ("0.17.0", m_0_17_0), ("0.18.0", m_0_18_0), ("0.19.0", m_0_19_0),
+              ("0.20.0", m_0_20_0))
 
 
 def main():
@@ -574,6 +692,11 @@ def main():
 
         if not pending:
             diag("migrate", verdict="current", engine=engine, stamp=stamp)
+            # ⭐ RECORD THE NO-OP (#41). Without this, "ran and found nothing" and "never ran
+            # at all" leave identical traces, which is exactly how a stamp sat eleven minors
+            # behind while the hook shipped in every version across that range.
+            if not args.check:
+                record_noop(profile, engine)
             if not args.hook:
                 print("Profile is current (schema %s, engine %s)." % (stamp, engine))
             return 0
@@ -592,7 +715,9 @@ def main():
              engine=engine, stamp=stamp, pending=len(pending),
              mode=("check" if args.check else ("hook" if args.hook else "cli")))
         if all_done and not args.check:
-            stamped, err = write_stamp(profile, engine)
+            stamped, err = write_stamp_record(
+                profile, engine,
+                attempt_record(engine, "applied", "%d migration(s)" % len(pending)))
             if not stamped:
                 # ⚠️ LOUD, NEVER SILENT (GitHub #8) — same principle as an unparseable
                 # precondition: a failure nobody can see is worse than none. But per this

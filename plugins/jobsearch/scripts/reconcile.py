@@ -308,41 +308,91 @@ def main():
     sess = Session(accounts)
     n_done = 0
 
+    # ⭐⭐ THE JOIN KEY IS THE OUTREACH ROW, NEVER THE PERSON — GitHub #2 (public).
+    #
+    # This searched mail PER ROW for the PERSON, then asked "did they reply after this row
+    # was sent?". Whenever one recipient has several outreach rows — the normal case for any
+    # sustained pursuit — a single reply satisfied that test for EVERY row, so a reply
+    # correctly recorded against one row was reported as missing against all its siblings.
+    # One observed weekly run produced 7 findings and 0 real ones.
+    #
+    # The cost is not the noise. This audit is the only mechanism that catches a genuinely
+    # unrecorded reply, and one whose findings are almost all false teaches its reader to
+    # skim — which is exactly when the real one is missed.
+    #
+    # So: group the rows by person, search ONCE per person (fewer round trips too), and
+    # ATTRIBUTE each inbound message to the row it actually answers — the latest row sent on
+    # or before it. A row reports an unrecorded reply only for messages attributed to it.
+    groups = {}
     for o, idx, r in targets:
         name, terms = person_terms(r.get("to"))
         if not terms:
             continue
+        key = (o.get("id"), name.lower())
+        groups.setdefault(key, {"name": name, "terms": terms, "rows": []})
+        groups[key]["rows"].append((o, idx, r))
+
+    def _row_date(r):
+        try:
+            return datetime.date.fromisoformat(r.get("date") or "")
+        except ValueError:
+            return None
+
+    for (_opp_id, _pk), g in groups.items():
+        name, terms = g["name"], g["terms"]
         q = "in:anywhere (%s)" % " OR ".join(terms)
         hits = sess.search(q)
-        sys.stderr.write("  ... %d/%d %s\r" % (n_done + 1, len(targets), name[:28]))
+        sys.stderr.write("  ... %d/%d %s\r" % (n_done + 1, len(groups), name[:28]))
         sys.stderr.flush()
         n_done += 1
 
-        row_date = None
-        if r.get("date"):
-            try:
-                row_date = datetime.date.fromisoformat(r["date"])
-            except ValueError:
-                pass
-        medium, replied, accepted = classify(hits, name, row_date)
+        rows = sorted(g["rows"], key=lambda t: (t[2].get("date") or ""))
+        attributed = {}
+        for h in hits:
+            hd = parse_hdr_date(h["date"])
+            if not hd:
+                continue
+            owner = None
+            for cand in rows:
+                rd = _row_date(cand[2])
+                if rd and rd <= hd:
+                    owner = cand          # rows are date-sorted; the last match is the latest
+            if owner is not None:
+                attributed.setdefault(id(owner[2]), []).append(h)
 
-        label = "%s — %s" % (companies.get(o.get("company_id"), o.get("company_id")), name)
-        if not hits:
-            findings["none"].append((o, idx, r, label))
-            continue
-        if r.get("medium") == "unknown" and medium:
-            findings["medium"].append((o, idx, r, label, medium, len(hits)))
-        # `responded_on` set means a human already read this inbound and dispositioned it.
-        # Without this test the audit re-reports it EVERY week and never stops. The case that
-        # forced it (2026-08-02): an OOO auto-reply is real inbound mail, so it must be recorded
-        # — but it is NOT a substantive answer, so `outcome` correctly stays `awaiting` and the
-        # thread keeps aging. Keying only on `outcome` made that legitimate state permanently
-        # indistinguishable from a missed reply. A finding that cries wolf every week is how a
-        # real one gets skimmed past, which defeats the point of the audit.
-        if replied and r.get("outcome") in ("awaiting", None) and not r.get("responded_on"):
-            findings["reply"].append((o, idx, r, label, replied))
-        if accepted and r.get("outcome") == "awaiting" and not r.get("responded_on"):
-            findings["accepted"].append((o, idx, r, label))
+        for o, idx, r in rows:
+            row_date = _row_date(r)
+            mine = attributed.get(id(r), [])
+            # Medium is a property of how this PERSON is reached, so it is inferred from every
+            # message. Reply and acceptance are properties of THIS ROW, so they see only what
+            # was attributed to it.
+            medium, _all_replied, _all_accepted = classify(hits, name, row_date)
+            _m, replied, accepted = classify(mine, name, row_date)
+
+            # ⚠️ An invitation ACCEPTANCE answers a connection request, not an email or an
+            # InMail. Reported against a row of another medium it is noise by construction —
+            # the second half of what made this audit unreadable.
+            if accepted and r.get("medium") not in (None, "unknown",
+                                                    "linkedin-connection-note"):
+                accepted = False
+
+            label = "%s — %s" % (companies.get(o.get("company_id"), o.get("company_id")), name)
+            if not hits:
+                findings["none"].append((o, idx, r, label))
+                continue
+            if r.get("medium") == "unknown" and medium:
+                findings["medium"].append((o, idx, r, label, medium, len(hits)))
+            # `responded_on` set means a human already read this inbound and dispositioned
+            # it. Without this test the audit re-reports it EVERY week and never stops. The
+            # case that forced it (2026-08-02): an OOO auto-reply is real inbound mail, so it
+            # must be recorded — but it is NOT a substantive answer, so `outcome` correctly
+            # stays `awaiting` and the thread keeps aging. Keying only on `outcome` made that
+            # legitimate state permanently indistinguishable from a missed reply.
+            if replied and r.get("outcome") in ("awaiting", None) \
+                    and not r.get("responded_on"):
+                findings["reply"].append((o, idx, r, label, replied))
+            if accepted and r.get("outcome") == "awaiting" and not r.get("responded_on"):
+                findings["accepted"].append((o, idx, r, label))
 
     if findings["reply"]:
         print("-" * 78)

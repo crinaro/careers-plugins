@@ -106,24 +106,70 @@ def main():
         if note:
             _announce_once(note, session, "engine:%s:%s" % (eroot, engine))
         profile = profile_root()
-        raw = ""
-        try:
-            with open(os.path.join(profile, ".jobsearch-schema"), encoding="utf-8") as fh:
-                raw = fh.read().strip()
-        except OSError:
+        if not os.path.exists(os.path.join(profile, ".jobsearch-schema")):
             _quiet_exit()          # no profile here — this is not a jobsearch session
-        stamp = raw
-        if raw.startswith("{"):
-            stamp = str((json.loads(raw) or {}).get("schema") or "")
-        if not engine or not stamp or _ver(stamp) >= _ver(engine):
+
+        # ⭐ THE RULEBOOK IS THE SESSION'S OPERATING CONTRACT, AND NOTHING WATCHED IT (#7).
+        #
+        # It installs into the profile as CLAUDE.md and is read into context ONCE, at session
+        # start. A session already running when the engine updates keeps the old one
+        # indefinitely — SessionStart cannot reach a session that already started — and a
+        # session running superseded rules does not fail loudly. It follows the old rules
+        # correctly and confidently, and everything it produces looks normal.
+        try:
+            with open(os.path.join(profile, "CLAUDE.md"), encoding="utf-8") as fh:
+                head = fh.read(400)
+            m = re.search(r"installed-from:\s*jobsearch\s*([0-9][0-9.]*)", head)
+            rb = m.group(1) if m else None
+        except OSError:
+            rb = None
+        if rb and engine and rb != engine:
+            _announce_once(
+                "jobsearch: the rulebook in your profile was installed from %s but the engine "
+                "is %s. It refreshes at the next session start; this session is running the "
+                "older rules." % (rb, engine),
+                session, "rulebook:%s:%s" % (rb, engine))
+
+        # A refresh that happened at THIS session's start still leaves the loaded copy stale,
+        # because the rulebook does not reload when the file changes. Only a restart fixes it.
+        state = os.path.join(os.path.expanduser("~"), ".claude", "jobsearch", "drift")
+        flag = os.path.join(state, "rulebook-refreshed")
+        try:
+            with open(flag, encoding="utf-8") as fh:
+                refreshed_to = fh.read().strip()
+            os.remove(flag)
+            if refreshed_to:
+                _announce_once(
+                    "jobsearch: the rulebook was refreshed to %s at this session's start, but a "
+                    "session reads it once and does not reload it — so THIS session is still "
+                    "running the previous rules. Restart to pick them up."
+                    % refreshed_to, session, "rulebook-reload:%s" % refreshed_to)
+        except OSError:
+            pass
+
+        # ⭐⭐ ASK THE REMEDY WHETHER THERE IS ANYTHING TO DO (#6).
+        #
+        # This compared the schema stamp against the ENGINE VERSION, which is a different
+        # question with a different answer: the stamp only advances when a migration exists,
+        # the version advances every release. After two releases carrying no migration, a
+        # correct profile sat legitimately behind and this warned on EVERY prompt about a
+        # condition no action could clear — while the remedy it named printed "current".
+        # A warning that always fires is one its reader learns to dismiss, which destroys the
+        # only mid-session signal there is.
+        try:
+            import migrate
+            pending = migrate.pending_for(profile, engine)
+        except Exception:                               # noqa: BLE001
+            _quiet_exit()          # cannot ask the remedy -> say nothing, never guess
+        if not pending:
             _quiet_exit()
 
         _announce_once(
-            "jobsearch: your profile's data shape is %s but the installed engine is %s. "
-            "The migration only runs at session start, so this session will keep using the "
-            "old shape. Start a new session, or run `~/.claude/jobsearch/run migrate.py` "
-            "from your search directory." % (stamp, engine),
-            session, "schema:%s:%s" % (stamp, engine))
+            "jobsearch: %d pending migration(s) for your profile (%s). The migration only runs "
+            "at session start, so this session keeps using the old shape. Start a new session, "
+            "or run `~/.claude/jobsearch/run migrate.py` from your search directory."
+            % (len(pending), ", ".join(pending)),
+            session, "schema:%s" % ",".join(pending))
     except Exception:                                   # noqa: BLE001
         pass                        # a guard that breaks a session is worse than no guard
     return 0

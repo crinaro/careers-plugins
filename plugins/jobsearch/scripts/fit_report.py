@@ -45,6 +45,12 @@ import sys
 import os, sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _root import profile_root as _profile_root
+# ⭐ THE ONE DEFINITION OF "already ruled out" — pipeline_index.is_excluded, whose own
+# docstring says "Do not re-derive this elsewhere." This report did not apply it at all
+# (GitHub #4), so a question on a passed/closed role still counted as open and could date
+# itself into the overdue set. An audit must honour the pipeline's own exclusion predicate,
+# or it reports work on roles the candidate already declined.
+from pipeline_index import is_excluded as _is_excluded
 
 ROOT = _profile_root()
 DATA = os.path.join(ROOT, "data")
@@ -153,13 +159,21 @@ def main():
             ("   ❓ %d open" % openq) if openq else ""))
 
     # ---- the harvest: open questions -------------------------------------------
-    gaps = []
+    gaps, excluded_q = [], 0
     for o in analyzed:
         for q in o["fit"]["requirements"]:
             if q.get("question_status") == "open" and q.get("question_for_candidate"):
+                if _is_excluded(o):
+                    excluded_q += 1      # the role is decided; the question is moot
+                    continue
                 gaps.append((o, q))
 
     rule("OPEN GAPS — targeted questions whose answers grow the knowledge base")
+    if excluded_q:
+        # Say what was withheld and why. A count that silently shrinks is its own puzzle.
+        print("  (%d question(s) on passed/closed roles are not counted — the role is decided,"
+              % excluded_q)
+        print("   so the question is moot. pipeline_index.is_excluded is the predicate.)\n")
     if not gaps:
         print("  None open. Every gap surfaced so far has been answered and filed.")
     else:

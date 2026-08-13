@@ -659,6 +659,29 @@ MIGRATIONS = (("0.4.0", m_0_4_0), ("0.13.0", m_0_13_0), ("0.14.0", m_0_14_0),
               ("0.20.0", m_0_20_0))
 
 
+def pending_for(profile, engine=None):
+    """The migrations this profile still needs — THE one definition, exported.
+
+    ⭐⭐ THE GUARD MUST ASK THE REMEDY (GitHub #6). drift_guard.py used to decide there was
+    drift by comparing the schema stamp against the ENGINE VERSION, which is a different
+    question and has a different answer: the stamp only advances when a migration exists,
+    while the version advances on every release. After 0.21.0 and 0.22.0 — neither carrying
+    a migration — a correct, fully-migrated profile sat legitimately at 0.20.0, and the
+    guard warned on every prompt of every session about a condition no action could clear.
+    Running the remedy it named printed "profile is current" and changed nothing.
+
+    That is the exact failure the guard exists to prevent: a warning that always fires is
+    one its reader learns to dismiss, so the release that DOES carry a migration produces a
+    signal indistinguishable from the noise. Worse, it sent the reader to a script whose own
+    output contradicted it, with nothing saying which was wrong.
+
+    Both now read this. They cannot disagree, because there is only one answer.
+    """
+    engine = engine or engine_version()
+    stamp = read_stamp(profile)
+    return [v for v, _fn in MIGRATIONS if ver(stamp) < ver(v) <= ver(engine)]
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -694,6 +717,17 @@ def main():
         if rb_lines:
             print("jobsearch: rulebook (%s)" % rb_verdict)
             print("\n".join(rb_lines))
+        if rb_verdict in ("refreshed", "installed"):
+            # ⚠️ The FILE is current now; the SESSION is not. A rulebook is read into context
+            # once and never reloaded, so the session that refreshed it is still running the
+            # previous rules (#7). Leave a flag for drift_guard to say so on the next prompt.
+            try:
+                st = os.path.join(os.path.expanduser("~"), ".claude", "jobsearch", "drift")
+                os.makedirs(st, exist_ok=True)
+                with open(os.path.join(st, "rulebook-refreshed"), "w", encoding="utf-8") as fh:
+                    fh.write(engine_version())
+            except OSError:
+                pass
     except Exception as e:                     # noqa: BLE001
         diag("migrate", verdict="rulebook-error", reason=type(e).__name__)
         if not args.hook:
@@ -709,7 +743,8 @@ def main():
 
         engine = engine_version()
         stamp = read_stamp(profile)
-        pending = [(v, fn) for v, fn in MIGRATIONS if ver(stamp) < ver(v) <= ver(engine)]
+        _due = set(pending_for(profile, engine))
+        pending = [(v, fn) for v, fn in MIGRATIONS if v in _due]
 
         if not pending:
             diag("migrate", verdict="current", engine=engine, stamp=stamp)

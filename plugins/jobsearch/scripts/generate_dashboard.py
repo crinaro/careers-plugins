@@ -224,66 +224,10 @@ def strip_your_move(md: str) -> str:
 
 
 
-def render_fit(opps, companies) -> str:
-    """The JD fit register — why the candidate is a fit, and what he must NOT claim.
-
-    ⭐ ADDED 2026-08-03. The fit{} block had existed since 2026-08-02 and the dashboard rendered
-    it NOWHERE, so 28 analyses were invisible on the surface the candidate actually reads. That is the
-    same failure he caught the same morning about drafts: work that is written but not published
-    is work he cannot use. The DO-NOT-CLAIM half matters most — a not-aligned requirement is the
-    thing that keeps a letter or an interview answer honest.
-    """
-    rows = [o for o in opps if o.get("fit")]
-    if not rows:
-        return '<div class="sub">No fit analysis recorded yet.</div>'
-    def rank(o):
-        r = o["fit"].get("requirements") or []
-        return -sum(1 for x in r if x.get("verdict") == "aligned")
-    out = []
-    for o in sorted(rows, key=rank):
-        f = o["fit"]; reqs = f.get("requirements") or []
-        cnt = {}
-        for r in reqs:
-            cnt[r.get("verdict")] = cnt.get(r.get("verdict"), 0) + 1
-        cname = companies.get(o.get("company_id"), {}).get("name", o.get("company_id") or "?")
-        chips = " ".join(
-            '<span class="pill">%s %d</span>' % (v, cnt[v])
-            for v in ("aligned", "partial", "unknown", "not-aligned") if cnt.get(v))
-        pitches = [r for r in reqs if r.get("verdict") == "aligned" and r.get("pitch_line")][:3]
-        nots = [r for r in reqs if r.get("verdict") == "not-aligned"]
-        qs = [r for r in reqs if r.get("question_for_candidate") and r.get("question_status") == "open"]
-        # ⭐ DATED QUESTIONS FIRST, AND SHOW THE DATE. `act_by` exists because the fact that made
-        # a question urgent used to live as PROSE inside the question text, where nothing could
-        # sort it (the <a recruiter> miss, 2026-08-03). That was fixed in coordinator.py — but NOT here,
-        # so the dashboard, which is the surface the candidate actually reads, still rendered every
-        # question as an undifferentiated bullet with no deadline on it. A deadline he cannot see
-        # is a deadline that only exists in a terminal he may not be looking at.
-        qs.sort(key=lambda r: (not r.get("act_by"), r.get("act_by") or ""))
-        body = []
-        if pitches:
-            body.append('<div class="sub" style="margin:6px 0 2px"><strong>Lead with</strong></div><ul style="margin:0 0 6px 18px">'
-                        + "".join("<li>%s</li>" % esc(r["pitch_line"]) for r in pitches) + "</ul>")
-        if nots:
-            body.append('<div class="sub" style="margin:6px 0 2px"><strong>⛔ Do NOT claim</strong></div><ul style="margin:0 0 6px 18px">'
-                        + "".join("<li>%s</li>" % esc(r["requirement"]) for r in nots) + "</ul>")
-        if qs:
-            _iso = datetime.date.today().isoformat()
-
-            def _q(r):
-                ab = r.get("act_by")
-                if not ab:
-                    return "<li>%s</li>" % esc(r["question_for_candidate"])
-                due = ab <= _iso
-                return ('<li><strong>%s %s</strong> &middot; %s</li>'
-                        % ("‼️ DUE" if due else "⏳ by", esc(ab),
-                           esc(r["question_for_candidate"])))
-            body.append('<div class="sub" style="margin:6px 0 2px"><strong>❓ Needs you</strong></div><ul style="margin:0 0 6px 18px">'
-                        + "".join(_q(r) for r in qs) + "</ul>")
-        out.append('<div class="card" style="margin-bottom:10px"><div class="ym-head">%s — %s</div>'
-                   '<div class="sub" style="margin:2px 0 6px">%s &middot; <em>%s</em></div>%s</div>'
-                   % (esc(cname), esc(o.get("title") or ""), chips,
-                      esc((f.get("jd_source") or "")[:150]), "".join(body)))
-    return "".join(out)
+# `render_fit()` lived here until 2026-08-13 and was NEVER CALLED. It rendered exactly the
+# open questions the coordinator points readers at, so its presence made the feature look
+# implemented while every generated dashboard omitted them (GitHub #5, public). Its
+# behaviour now lives in `_fit_detail`, which is the renderer that actually runs.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -380,6 +324,39 @@ def _fit_detail(o):
         # collapsed away behind the aligned list.
         out.append('<div class="od-p od-warn"><strong>Do not claim:</strong> '
                    + esc(", ".join(str(r.get("requirement", "")) for r in other)) + "</div>")
+
+    # ⭐⭐ THE OPEN QUESTIONS RENDER HERE — GitHub #5 (public).
+    #
+    # The coordinator truncates its own list and sends the reader to "the dashboard's JD fit
+    # section" for the rest. That section existed and never held them: the renderer that did
+    # was written and never called, so the feature looked present while every generated
+    # dashboard omitted it. Grepping a real dashboard for the question text returned nothing,
+    # for any role.
+    #
+    # A report that truncates itself must point at a surface that actually holds the
+    # remainder, so they go where the pointer already says they are.
+    #
+    # ⚠️ DATED FIRST, AND SHOW THE DATE. `act_by` exists because the fact that made a question
+    # urgent used to live as prose inside the question text, where nothing could sort it.
+    # Rendering them undifferentiated here would rebuild exactly that.
+    qs = [r for r in reqs
+          if r.get("question_for_candidate") and r.get("question_status") == "open"]
+    if qs:
+        import datetime as _dt
+        today = _dt.date.today().isoformat()
+        qs = sorted(qs, key=lambda r: (r.get("act_by") or "9999-99-99"))
+        items = []
+        for r in qs:
+            ab = r.get("act_by")
+            text = esc(str(r["question_for_candidate"]))
+            if not ab:
+                items.append("<li>%s</li>" % text)
+            else:
+                items.append('<li><strong>%s %s</strong> &middot; %s</li>'
+                             % ("&#8252;&#65039; DUE" if str(ab) <= today else "&#9203; by",
+                                esc(str(ab)), text))
+        out.append('<div class="od-p"><strong>&#10067; Needs you:</strong></div>'
+                   '<ul class="od-p" style="margin:0 0 6px 18px">%s</ul>' % "".join(items))
     return "".join(out)
 
 

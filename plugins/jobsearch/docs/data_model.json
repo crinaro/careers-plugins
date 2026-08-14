@@ -19,6 +19,7 @@
         "next_action",
         "next_action_owner",
         "next_action_date",
+        "blocked_until",
         "research_log",
         "outreach",
         "contacts",
@@ -177,8 +178,7 @@
         "relationship_status",
         "log",
         "next_touch",
-        "access",
-        "last_touch"
+        "access"
       ],
       "required": [
         "id",

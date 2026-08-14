@@ -73,6 +73,17 @@ ENGINE_ROOT = _engine_root()
 # class already fixed in check_engine_purity.py. Named families (same shape as that file's
 # ENGINE_FAMILIES), sourced from where the engine actually lives, and checked for emptiness in
 # main() below rather than trusted to resolve.
+#
+# ⭐⭐ dev #77 / public #10, 2026-08-14: fixing the root above traded one vacuous-glob failure
+# for another. `docs/adr-*.md` is design rationale — `publish_manifest.py` deliberately never
+# ships it (`/docs/adr-` in PRIVATE_RULES: "the design rationale, deliberately not shipped") —
+# so an INSTALLED engine has zero files under that glob BY DESIGN, and this gate printed
+# "THE GATE SCANNED NOTHING — this is a BROKEN GATE" on every daily/weekly run for every real
+# install, because `check_pointers.py` is instructed from daily-run and weekly-review SKILL.md.
+# check_engine_purity.py hit the identical shape first (its `docs` family) and the fix there is
+# the fix here too: an empty family is a hard failure in a CHECKOUT (a glob has gone stale) but
+# only a NOTE in a SHIPPED PACKAGE (the family was never going to be there). `tests/` never
+# ships, so its presence is the marker main() uses below to tell the two apart.
 ENGINE_FAMILIES = (
     ("agents", os.path.join(ENGINE_ROOT, "agents", "*.md")),
     ("skills", os.path.join(ENGINE_ROOT, "skills", "*", "SKILL.md")),
@@ -140,15 +151,31 @@ def main():
     print("=" * 74)
 
     # ⭐⭐ A SCAN THAT COVERED NOTHING IS A FAILURE, NEVER A PASS (issue #34, part 3 — same rule
-    # as check_engine_purity.py). A family matching zero files means the glob no longer matches
-    # this layout, not that the layout has nothing to check.
+    # as check_engine_purity.py). Nothing scanned at all is always a hard failure. But a single
+    # empty FAMILY means different things in the two trees a copy of this script runs in:
+    #
+    #   checkout  every family should be populated, so an empty one is a stale glob (the
+    #             rename this guard exists to catch) -> hard failure.
+    #   package   `docs/adr-*.md` deliberately never ships (dev #77 / public #10, same shape as
+    #             check_engine_purity.py's `docs` family) -> a note, not a failure. Hard-failing
+    #             here made every real install's daily/weekly run print "BROKEN GATE" forever,
+    #             which is worse than the vacuous scan this rule exists to catch.
+    #
+    # `tests/` never ships, so its presence is the marker for "this is a checkout".
     empty = [name for name, pat in ENGINE_FAMILIES if not glob.glob(pat)]
-    if empty or not ENGINE:
+    if not ENGINE:
         print("  !! THE GATE SCANNED NOTHING — this is a BROKEN GATE, not a clean tree.")
-        print("     engine families matching zero files: %s" % (", ".join(empty) or "ALL"))
-        print("     Either ENGINE_ROOT above is wrong, or a family was renamed and this list")
-        print("     was not. Do NOT read a green run as evidence of anything.")
+        print("     Either ENGINE_ROOT above is wrong, or every family was renamed and this")
+        print("     list was not. Do NOT read a green run as evidence of anything.")
         return 1
+    if empty:
+        is_checkout = os.path.isdir(os.path.join(ENGINE_ROOT, "tests"))
+        if is_checkout:
+            print("  !! FAMILY MATCHED NOTHING in a checkout: %s" % ", ".join(empty))
+            print("     Every family should be populated here, so a glob has gone stale.")
+            print("     Do NOT read a green run as evidence of anything.")
+            return 1
+        print("  note: family matching zero files in this package: %s" % ", ".join(empty))
 
     cfg, usr = load("config.json"), load("user.json")
     chan_ids = {c["id"] for c in load("data/channels.jsonl")}

@@ -43,7 +43,10 @@ reasoning prose anywhere.
 > 4. **Send anything** — message, connection request, or application.
 >
 > **This has been violated three times.** If any of it "seems necessary," that is the signal to
-> STOP and hand back.
+> STOP and hand back. Rule 4 also has a mechanical backstop: `scripts/guard_outbound_click.py`
+> DENYs a ref-based click that resolves to Send/Connect/Invite/Apply/InMail/Post/Share (dev
+> #78). It is a guard, not a sandbox — this prose rule is still the first line, not a formality
+> made redundant by the script.
 
 **PIPELINE:** write roles to `data/opportunities.jsonl` (and `companies.jsonl` if new) per
 `docs/schema.md`, then `~/.claude/jobsearch/run validate_data.py`. Put the JD URL in `jd_url`, not in
@@ -204,8 +207,9 @@ mirrored into notifications, and neither the INBOX SCAN nor the JOB SEARCH sees 
 item so it can be cross-checked; same new-vs-tracked discipline. If a specific alert is named,
 read that one in full rather than skimming past it.
 
-**Rules:** NEVER click Send on any message, invite or application. Return a compact structured
-report; **do not edit tracker files yourself.**
+**Rules:** NEVER click Send on any message, invite or application — `guard_outbound_click.py`
+backstops this mechanically, but it does not replace it. Return a compact structured report;
+**do not edit tracker files yourself.**
 
 **⭐ CLOSE EVERY TAB YOU OPENED** via `tabs_close_mcp` before finishing. Closing the last tab in
 the group makes Chrome auto-remove the group; leaving one open orphans it indefinitely, and

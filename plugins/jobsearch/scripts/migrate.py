@@ -654,9 +654,138 @@ def m_0_20_0(profile, apply_it):
                   "`standout_exception_requires_owner`" % len(old))
 
 
+def m_0_24_0_blocked_until(profile, apply_it):
+    """0.24.0 (part 1 of 2) — Your Move role state gets its own field (GitHub issue #79).
+
+    The "needs you" queue used to select rows by ownership alone, so a role future-dated
+    weeks out and one genuinely overdue rendered identically. `your_move.py` now groups by a
+    `blocked_until` field; this backfills it from what the profile already has.
+
+    Scans LIVE, candidate-owned opportunities whose `next_action` prose carries a hold phrase
+    (`precondition.HOLD_RE`, imported — never restated, same rule m_0_18_0 follows for
+    drafts). Exactly one of the record's OWN `outreach[]` rows with `outcome: awaiting` names
+    a single plausible contact: writes the real join, `contact:<id>
+    outcome:accepted|replied`. Zero or more than one candidate is ambiguous: writes the
+    literal `unresolved`, which `your_move.py` treats as its own loud callout, never
+    "needs you", until a human structures the real join. No hold phrase: no field written.
+
+    ⭐ PRESERVE, THEN TRANSFORM. `next_action`'s prose is never deleted or rewritten — it
+    stays the human-readable evidence; only the FACT that the role is blocked moves into the
+    queryable store (the general rule `precondition.py` documents). Additive and idempotent:
+    a row already carrying ANY `blocked_until` (from an earlier run, or hand-authored) is
+    skipped, so a second run finds nothing left to do.
+    """
+    import precondition as _pre
+    import your_move as _ym
+    import profile as _profile
+    path = os.path.join(profile, "data", "opportunities.jsonl")
+    if not os.path.exists(path):
+        return True, ""
+    try:
+        owner = _profile.owner_token()
+    except Exception:
+        owner = None
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+    except Exception as e:
+        return False, ("  ⚠️ opportunities.jsonl could not be read, so no blocked_until was "
+                       "backfilled: %s" % e)
+
+    changed, marked = 0, []
+    for r in rows:
+        if "blocked_until" in r:
+            continue
+        if r.get("next_action_owner") != owner or r.get("status") not in _ym.LIVE_OPP_STATUSES:
+            continue
+        text = str(r.get("next_action") or "")
+        if not _pre.HOLD_RE.search(text):
+            continue
+        awaiting = sorted({o.get("contact_id") for o in (r.get("outreach") or [])
+                           if o.get("contact_id") and o.get("outcome") == "awaiting"})
+        if len(awaiting) == 1:
+            r["blocked_until"] = "contact:%s outcome:accepted|replied" % awaiting[0]
+            marked.append("%s → contact:%s" % (r.get("id", "?"), awaiting[0]))
+        else:
+            r["blocked_until"] = "unresolved"
+            marked.append("%s → unresolved (%s)"
+                          % (r.get("id", "?"), "no awaiting touch" if not awaiting
+                             else "%d candidate contacts" % len(awaiting)))
+        changed += 1
+
+    if not changed:
+        return True, ""
+    if not apply_it:
+        return True, ("  would backfill blocked_until on %d opportunity(ies) whose "
+                      "next_action carries a hold phrase" % changed)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)               # atomic: never a half-written pipeline file
+    return True, ("  ✅ opportunities.jsonl — blocked_until backfilled on %d role(s): %s"
+                  % (changed, "; ".join(marked)[:300]))
+
+
+def m_0_24_0_last_touch(profile, apply_it):
+    """0.24.0 (part 2 of 2) — `last_touch` is removed from the channel schema (GitHub #79).
+
+    `your_move.py`'s derived-touch computation replaces it: the max of an outbound message in
+    messages.jsonl joined by contact_id, and the latest log[] entry. Nothing ever wrote
+    last_touch mechanically (only two hand-written test cases and a dead read in
+    check_action_claims.py did), so removing it costs no live capability. REQUIRED, not
+    optional tidying: unknown keys are rejected at write time (schema.md), so a channel still
+    carrying this key would fail record.py's write guard the next time anything touched it.
+
+    ⭐ PRESERVE, THEN TRANSFORM. Any hand-authored value is folded into `log[]` as
+    `{"date": <its value>, "note": "(migrated from last_touch)"}` before the key is dropped —
+    nothing is discarded, it just moves to where the schema still allows it. Additive from
+    log[]'s point of view and idempotent: a row with no last_touch is untouched.
+    """
+    path = os.path.join(profile, "data", "channels.jsonl")
+    if not os.path.exists(path):
+        return True, ""
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+    except Exception as e:
+        return False, "  ⚠️ channels.jsonl could not be read, so last_touch was left alone: %s" % e
+
+    changed, folded = 0, []
+    for r in rows:
+        if "last_touch" not in r:
+            continue
+        val = r.pop("last_touch")
+        r.setdefault("log", []).append({"date": val, "note": "(migrated from last_touch)"})
+        folded.append("%s (%s)" % (r.get("id", "?"), val))
+        changed += 1
+
+    if not changed:
+        return True, ""
+    if not apply_it:
+        return True, ("  would fold last_touch into log[] and remove it on %d channel(s): %s"
+                      % (changed, "; ".join(folded)[:300]))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)               # atomic: never a half-written pipeline file
+    return True, ("  ✅ channels.jsonl — last_touch folded into log[] and removed on %d "
+                  "channel(s): %s" % (changed, "; ".join(folded)[:300]))
+
+
 MIGRATIONS = (("0.4.0", m_0_4_0), ("0.13.0", m_0_13_0), ("0.14.0", m_0_14_0),
               ("0.17.0", m_0_17_0), ("0.18.0", m_0_18_0), ("0.19.0", m_0_19_0),
-              ("0.20.0", m_0_20_0))
+              ("0.20.0", m_0_20_0), ("0.24.0", m_0_24_0_blocked_until),
+              ("0.24.0", m_0_24_0_last_touch))
 
 
 def pending_for(profile, engine=None):

@@ -17,6 +17,7 @@ import os, sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _root import profile_root as _profile_root
 import profile as _profile
+import your_move as _ym
 
 # ⚠️ .absolute(), NOT .resolve() — 2026-08-05. `.resolve()` FOLLOWS SYMLINKS, and the tracker
 # consumes this engine as a submodule with `scripts -> engine/scripts`. Resolving made ROOT
@@ -887,6 +888,17 @@ def opp_focus_from_jsonl():
     return "".join(parts)
 
 
+def _role_title(o, companies, mark="🎯"):
+    comp = companies.get(o.get("company_id"), {})
+    return "%s %s — %s" % (mark, comp.get("name", o.get("company_id", "")), o.get("title", ""))
+
+
+def _role_ask(o):
+    ctx = [b for b in (_fmt_comp(o.get("comp")) if o.get("comp") else "",
+                       _fmt_loc(o.get("location"))) if b]
+    return ((" · ".join(ctx) + ". ") if ctx else "") + (o.get("next_action") or "")
+
+
 def your_move_roles_from_jsonl():
     """Role decisions on Your Move are a FILTERED VIEW of data/opportunities.jsonl —
     not hand-copied prose (added 2026-07-29, per the candidate: 'the your move page should be a
@@ -895,20 +907,22 @@ def your_move_roles_from_jsonl():
     surfaces here automatically, with its
     comp / location / lean / JD link sourced straight from the record. To move a role on
     or off Your Move, change its next_action_owner in the JSONL — never edit focus.md.
+
+    ⭐ GitHub #79 — ownership alone is no longer the filter. `your_move.py` is the single
+    owner of role-group membership (unresolved / waiting / scheduled / now); this renders
+    ONLY the `now` group — a future-dated or blocked role does not belong in the primary
+    "needs you" queue. `your_move_callouts()` surfaces the other three states.
+
     Returns (title, ask, opp_id) tuples matching render_your_move's shape (opp_id lets it
     resolve the JD link from the same links map the tagged manual asks use)."""
     companies = {c["id"]: c for c in load_jsonl("companies.jsonl")}
-    live = {"active-pursuit", "needs-resolution"}
+    classified = _ym.classify_opportunities(load_jsonl("opportunities.jsonl"), OWNER_TOKEN)
     items = []
-    for o in load_jsonl("opportunities.jsonl"):
-        if o.get("next_action_owner") != OWNER_TOKEN or o.get("status") not in live:
+    for o, state, _why in classified:
+        if state != "now":
             continue
-        comp = companies.get(o.get("company_id"), {})
-        title = "🎯 %s — %s" % (comp.get("name", o.get("company_id", "")), o.get("title", ""))
-        ctx = [b for b in (_fmt_comp(o.get("comp")) if o.get("comp") else "",
-                           _fmt_loc(o.get("location"))) if b]
-        ask = ((" · ".join(ctx) + ". ") if ctx else "") + (o.get("next_action") or "")
-        items.append((title, ask, o.get("id"), o.get("next_action_date") or "9999"))
+        items.append((_role_title(o, companies), _role_ask(o), o.get("id"),
+                      o.get("next_action_date") or "9999"))
     # Soonest act-by first, so the most time-sensitive decision leads.
     items.sort(key=lambda t: t[3])
     return [(t, a, oid) for (t, a, oid, _d) in items]
@@ -931,16 +945,23 @@ def your_move_channels_from_jsonl():
     would be inventing a second way to say what the record already says, which is the very
     duplication this issue is about.
 
-    When the touch happens, the run clears or advances `next_touch` and the item leaves this
-    list because the filter no longer matches — not because somebody remembered to delete a
-    line of prose. Returns render_your_move's (title, ask, opp_id) shape; opp_id is None
+    ⭐ GitHub #79 — a truthy `next_touch.date` is no longer enough by itself. `your_move.py`
+    is the single owner of channel-group membership (now / scheduled / fulfilled), derived
+    from actual outbound messages and log[] entries rather than a hand-authored field; this
+    renders ONLY the `now` group. A future-dated plan does not belong here yet (it is
+    `scheduled`), and a plan a later touch already satisfied does not belong here either (it
+    is `fulfilled`) — the item leaves this list the moment the derived data says so, not when
+    somebody remembers to clear `next_touch` by hand. `your_move_callouts()` surfaces the
+    other two states. Returns render_your_move's (title, ask, opp_id) shape; opp_id is None
     because a relationship follow-up has no job posting to link to.
     """
+    messages = load_jsonl("messages.jsonl")
     items = []
-    for c in load_jsonl("channels.jsonl"):
-        nt = c.get("next_touch")
-        if not isinstance(nt, dict) or not nt.get("date"):
+    for c, state, _touch, _evidence in _ym.classify_channels(load_jsonl("channels.jsonl"),
+                                                               messages):
+        if state != "now":
             continue
+        nt = c.get("next_touch") or {}
         label = c.get("label") or c.get("id") or "a channel"
         when = str(nt.get("date"))
         bits = [b for b in (nt.get("time"), nt.get("note")) if b]
@@ -952,6 +973,78 @@ def your_move_channels_from_jsonl():
         items.append(("🤝 %s" % label, ask, None, when))
     items.sort(key=lambda t: t[3])
     return [(t, a, oid) for (t, a, oid, _d) in items]
+
+
+def your_move_callouts():
+    """GitHub #79 — the three states that must NEVER render inside the primary "needs you"
+    queue, but must not vanish silently either: an unresolved/unreadable `blocked_until`, a
+    role still waiting on the other side, and a channel plan a touch already fulfilled but
+    nobody has cleared. Each is its own loud callout — see render_your_move_callouts().
+
+    Returns (unresolved, waiting, fulfilled), each a list of render_your_move's
+    (title, ask, opp_id) tuples.
+    """
+    companies = {c["id"]: c for c in load_jsonl("companies.jsonl")}
+    unresolved, waiting = [], []
+    for o, state, why in _ym.classify_opportunities(load_jsonl("opportunities.jsonl"),
+                                                     OWNER_TOKEN):
+        if state == "unresolved":
+            unresolved.append((_role_title(o, companies, "🚧"), why, o.get("id"),
+                               o.get("next_action_date") or "9999"))
+        elif state == "waiting":
+            waiting.append((_role_title(o, companies, "⏳"), why, o.get("id"),
+                            o.get("next_action_date") or "9999"))
+    unresolved.sort(key=lambda t: t[3])
+    waiting.sort(key=lambda t: t[3])
+
+    messages = load_jsonl("messages.jsonl")
+    fulfilled = []
+    for c, state, touch, evidence in _ym.classify_channels(load_jsonl("channels.jsonl"),
+                                                            messages):
+        if state != "fulfilled":
+            continue
+        label = c.get("label") or c.get("id") or "a channel"
+        nt = c.get("next_touch") or {}
+        ask = ("Plan fulfilled on %s by %s (planned for %s) — clear next_touch or author the "
+              "next one." % (touch, evidence, nt.get("date")))
+        fulfilled.append(("✅ %s" % label, ask, None, str(touch or "")))
+    fulfilled.sort(key=lambda t: t[3])
+
+    return ([(t, a, oid) for (t, a, oid, _d) in unresolved],
+            [(t, a, oid) for (t, a, oid, _d) in waiting],
+            [(t, a, oid) for (t, a, oid, _d) in fulfilled])
+
+
+def render_your_move_callouts(unresolved, waiting, fulfilled, links=None):
+    """Loud, non-"needs you" callouts for Your Move — GitHub #79. None of these three groups
+    render inside render_your_move's primary list; they exist so an unresolved precondition,
+    a still-pending one, or an uncleared fulfilled plan is visible rather than silently
+    dropped, without padding the one list that must stay unskippable."""
+    parts = []
+    if unresolved:
+        parts.append(
+            '<h2 style="font-size:16px;margin-top:22px">🚧 Unresolved — blocked_until needs a '
+            'real join <span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">An unreadable or unstructured '
+            '<code>blocked_until</code>. Never "needs you" until it is replaced with '
+            '<code>contact:&lt;id&gt; outcome:&lt;...&gt;</code>.</div>'
+            '<div class="card">%s</div>' % (len(unresolved), render_your_move(unresolved, links)))
+    if waiting:
+        parts.append(
+            '<h2 style="font-size:16px;margin-top:22px">⏳ Waiting on the other side '
+            '<span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">Blocked until the named contact '
+            'reaches the outcome the role is waiting on. <strong>Not yours to do</strong> — '
+            'moves to the list above by itself once the record shows it.</div>'
+            '<div class="card">%s</div>' % (len(waiting), render_your_move(waiting, links)))
+    if fulfilled:
+        parts.append(
+            '<h2 style="font-size:16px;margin-top:22px">✅ Plans fulfilled, not yet cleared '
+            '<span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">A touch landed on or after the '
+            'planned date. Clear <code>next_touch</code> or author the next one.</div>'
+            '<div class="card">%s</div>' % (len(fulfilled), render_your_move(fulfilled, links)))
+    return "".join(parts)
 
 
 def main():
@@ -1051,6 +1144,11 @@ def main():
     channel_touches = your_move_channels_from_jsonl()
     your_move = role_decisions + channel_touches + your_move
     your_move_html = render_your_move(your_move, ym_links)
+    # GitHub #79 — group membership is your_move.py's alone; these three states must never
+    # land inside your_move_html above, but must not vanish silently either.
+    _unresolved_rows, _waiting_rows, _fulfilled_rows = your_move_callouts()
+    your_move_callouts_html = render_your_move_callouts(_unresolved_rows, _waiting_rows,
+                                                         _fulfilled_rows, ym_links)
     thisweek_html = render_focus(thisweek_focus)
 
     # ⭐ THE PROCESS TAB WAS REMOVED 2026-08-06 — engine work is not a local to-do list.
@@ -1408,6 +1506,7 @@ def main():
   <h2>⚡ Decisions &amp; actions waiting on you</h2>
   <div class="sub" style="margin:-6px 0 10px"><strong>What lives here:</strong> job-search actions blocked on you — each line is a question or an ask. Once it\u2019s answered it leaves this list entirely, rather than becoming a \u201cdone\u201d note. System and tooling items now sit in their own group just below, not on a separate tab.</div>
   <div class="ym-card"><div class="ym-head">Nothing here moves without you</div>{your_move_html}</div>
+  {your_move_callouts_html}
   <h2 style="font-size:16px;margin-top:22px">⚙️ System &amp; tooling — needs you <span class="tcount">{n_needs}</span></h2>
   <div class="sub" style="margin:-6px 0 10px">Decisions about the tracker, scripts, credentials, or tooling that only you can make. Same rule: each stays until it is done.</div>
   <div class="ym-card"><div class="ym-head">Needs your input</div>{needs_html or '<div class="sub" style="padding:8px 0">Nothing here needs you right now.</div>'}</div>

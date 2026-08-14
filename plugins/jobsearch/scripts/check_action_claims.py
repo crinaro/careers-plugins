@@ -34,6 +34,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from _root import profile_or_fixture as _pof                       # noqa: E402
+import your_move as _ym                                            # noqa: E402
 
 ROOT = _pof()
 DATE_RE = re.compile(r"\b(20\d\d-\d\d-\d\d)\b")
@@ -83,16 +84,24 @@ def known_entities():
         if cur is None or str(when) > cur[0]:
             ent[name] = (str(when), why)
 
-    for c in rows("channels.jsonl"):
+    # ⭐ `last_touch` was removed from the channel schema (GitHub #79) — nothing ever wrote it
+    # mechanically, so this read was already dead in practice, and it would now be reading a
+    # rejected key besides. `your_move.derive_channel_last_touch` is the correct source: the
+    # max of an outbound message joined by contact_id and the latest log[] entry. Minimal fix
+    # to keep this file correct; the full rewrite of this check belongs to a separate issue.
+    _channel_rows = list(rows("channels.jsonl"))
+    _message_rows = list(rows("messages.jsonl"))
+    for c in _channel_rows:
         label = c.get("label") or c.get("id")
-        for field, why in (("last_touch", "the channel's own last_touch"),
-                           ("last_reviewed", "the channel's own last_reviewed")):
-            note(label, c.get(field), why)
+        derived, _evidence = _ym.derive_channel_last_touch(c, _message_rows)
+        if derived:
+            note(label, derived, "the channel's derived last touch (outbound message or log)")
+        note(label, c.get("last_reviewed"), "the channel's own last_reviewed")
         for person in (c.get("contacts") or []):
             if isinstance(person, dict):
-                note(person.get("name"), c.get("last_touch"), "a touch on their channel")
+                note(person.get("name"), derived, "a touch on their channel")
 
-    for m in rows("messages.jsonl"):
+    for m in _message_rows:
         if m.get("direction") == "outbound":
             note(m.get("to"), m.get("sent_on"), "an outbound message in messages.jsonl")
 

@@ -1,5 +1,5 @@
 {
-  "description": "Blocks a profile session from writing into the engine or the installed plugin cache. Rationale: docs/adr-010-engine-write-guard.md; the check itself: scripts/guard_engine_writes.py.",
+  "description": "Blocks a profile session from writing into the engine or the installed plugin cache (scripts/guard_engine_writes.py, docs/adr-010-engine-write-guard.md), and DENYs a ref-based click that resolves to an outbound-terminal control such as Send/Connect/Invite/Apply (scripts/guard_outbound_click.py, docs/deployment.md's 'outbound-click guard' section).",
   "hooks": {
     "SessionStart": [
       {
@@ -8,6 +8,11 @@
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/migrate.py --hook",
             "timeout": 20
+          },
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/guard_outbound_click.py --selftest",
+            "timeout": 10
           }
         ]
       }
@@ -30,6 +35,16 @@
           {
             "type": "command",
             "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/guard_engine_writes.py",
+            "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "mcp__Claude_Browser__computer|mcp__claude-in-chrome__computer|mcp__claude-in-chrome__browser_batch",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}\"/scripts/guard_outbound_click.py",
             "timeout": 10
           }
         ]

@@ -23,6 +23,7 @@ _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _root import profile_root as _profile_root
 import route as _route
 import profile as _profile
+import your_move as _ym
 
 ROOT = _profile_root()
 # ⭐ Overridable so a FRESH INSTALL can be verified (2026-08-05). A new user's very first gate run
@@ -442,6 +443,20 @@ def main():
 
         # ownership — required, drives Your Move vs my-tasks generation
         enum(r, "next_action_owner", OWNERS, label, problems)
+
+        # ⭐ blocked_until — GitHub #79. Grammar is precondition.py's VERBATIM, owned by
+        # your_move.py (the single place that decides Your Move group membership). Only a
+        # genuinely UNREADABLE value is a schema problem: the literal 'unresolved' is valid,
+        # durable data (a decided, not-yet-structured state — see your_move.py's docstring),
+        # exactly as precondition.py never treats its own `unresolved` marker as a parse
+        # error. An unreadable precondition is worse than none because it looks handled and
+        # is not, so this fails loudly rather than silently defaulting to 'now'.
+        bu = r.get("blocked_until")
+        if bu is not None:
+            try:
+                _ym.parse_blocked_until(bu)
+            except _ym.PreconditionError as e:
+                problems.append("%s: blocked_until %r is unreadable — %s" % (label, bu, e))
         # contacts — warm paths / hiring managers / internal
         for i, ct in enumerate(r.get("contacts", [])):
             if "name" not in ct:

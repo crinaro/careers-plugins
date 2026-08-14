@@ -11,9 +11,13 @@ detector for these events. A search with no session finds nothing and reports a 
 
 ## 0. ⭐ FIRST — IS THERE A BROWSER AT ALL?
 
-**A headless / CLI session (`claude -p`) has NO browser tools — neither surface.** Verified
-2026-08-05: `mcp__Claude_Browser__*` and `mcp__claude-in-chrome__*` are both absent there, so this
-command cannot run and nothing is wrong with the LinkedIn session.
+**A headless / CLI session (`claude -p`) normally cannot do this work — but do not assume,
+check.** Verified 2026-08-05: a terminal-launched session had neither `mcp__Claude_Browser__*` nor
+`mcp__claude-in-chrome__*`. Re-probed 2026-08-14: an *app-spawned* headless session carried the
+pane's read tools (`navigate`, `get_page_text`) without `computer`, and `claude -p --chrome`
+carried the full `mcp__claude-in-chrome__*` family. So the presence of one tool does not imply
+the family: check for the specific tools each step needs. When they are absent, nothing is wrong
+with the LinkedIn session — this surface simply cannot run the command.
 
 If neither tool family is available, say exactly that and stop:
 

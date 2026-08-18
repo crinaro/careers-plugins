@@ -60,7 +60,7 @@ empty body on 2026-07-27.**
    proof the final text specifically for it.
 6. **Never mention compensation.**
 7. **Never force the AI/agentic angle** where the JD has no hook for it.
-8. **Nothing is submitted on the candidate's behalf.** He pastes it into the ATS himself.
+8. **Nothing is submitted on the candidate's behalf.** The candidate pastes it into the ATS directly.
 
 ## THE TWO JOBS
 

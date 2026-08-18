@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-COORDINATOR — the one command to run when the candidate opens his working session.
+COORDINATOR — the one command to run when the candidate opens their working session.
 
 WHY THIS EXISTS
 ---------------
@@ -45,16 +45,16 @@ There are exactly two channels, and only one of them is a push:
    **⚠️ ONLY A REGULAR SESSION CAN CLAIM IT — a scheduled run cannot.** Verified 2026-08-02:
    attempting it from inside a scheduled run is refused outright, *"Can't subscribe a
    scheduled-task run session to completion notifications — it ends when the run does."* So
-   **The candidate must run this from HIS interactive session**; no automation can set it up for him, and
-   it must be re-claimed whenever he starts a fresh coordinator session.
+   **The candidate must run this from THEIR interactive session**; no automation can set it up for them, and
+   it must be re-claimed whenever they start a fresh coordinator session.
 
 2. **PULL — `data/inbox.jsonl`.** Everything a background run found. This is the durable half:
    it survives a closed app, a dead session, and a missed notification, and findings are keyed so
    nothing is ever queued twice. **A notification can be lost; the queue cannot.**
 
 **There is no message-passing between sessions here.** `send_message` cannot reach or come from a
-scheduled run. So state moves through FILES — the queue, `data/*.jsonl`, and `focus.md`'s Session
-Handoff block. That is a feature: a file is inspectable, replayable, and does not depend on any
+scheduled run. So state moves through FILES — the queue, `data/*.jsonl`, and `handoff.md`, the
+session-handoff letter. That is a feature: a file is inspectable, replayable, and does not depend on any
 session still being alive.
 
 Usage:
@@ -63,7 +63,7 @@ Usage:
 
 **⭐ IT DOES NOT TAKE THE LOCK — corrected 2026-08-03.** the candidate: *"Why can't it run concurrently
 with the coordinator session? That was the main purpose."* Holding it from startup blocked every
-background run for as long as he had a session open; on 08-03 an idle session held it 28 minutes
+background run for as long as the candidate had a session open; on 08-03 an idle session held it 28 minutes
 and cost the 07:00 run outright. **Lock around each WRITE and release immediately:**
 `runlock.py --take "coordinator write" --wait 60` ... edit ... `--release`.
 
@@ -109,7 +109,7 @@ def main():
     #
     # Taking it here was right about ONE thing (every writer must take the lock) and wrong about
     # WHEN. Held from session start, it blocked every background run for as long as the candidate had a
-    # session open. Measured 08-03: his session went idle at 07:02 still holding; at 07:09 it had
+    # session open. Measured 08-03: their session went idle at 07:02 still holding; at 07:09 it had
     # been held 28 min and nothing could write until the staleness expiry ~09:11. The 07:00 run
     # was lost and 09:00 would have been too. That is the opposite of running every 2 hours.
     #
@@ -158,7 +158,7 @@ def main():
         print("\n  NOT taking the lock — background runs are free to work alongside you.")
         print("  ⭐ TAKE IT AROUND EACH WRITE INSTEAD, then release straight away:")
         print("       python3 scripts/runlock.py --take \"coordinator write\" --wait 60")
-        print("       ...edit data/*.jsonl, focus.md, log.md; commit...")
+        print("       ...edit data/*.jsonl, handoff.md, log.md; commit...")
         print("       python3 scripts/runlock.py --release")
         print("  Holding it all session is what lost the 07:00 run on 2026-08-03.")
 
@@ -229,20 +229,21 @@ def main():
         by = o.get("next_action_date") or "no date"
         print("  • [%s] %s — %s" % (by, companies.get(o.get("company_id"), "?")[:28],
                                     (o.get("title") or "")[:40]))
-    fp = os.path.join(ROOT, "focus.md")
-    if os.path.exists(fp):
-        with open(fp, encoding="utf-8") as fh:
-            t = fh.read()
-        i = t.find("## ⚡ Your Move")
-        if i >= 0:
-            j = t.find("\n## ", i + 5)
-            n = len(re.findall(r"^\d+\. \*\*", t[i:j if j > 0 else len(t)], re.M))
-            print("\n  Your Move carries %d item(s) — see the dashboard." % n)
+    # dev #93 — the cross-cutting asks are a store, not a focus.md section.
+    try:
+        import your_move as _ym
+        open_asks = _ym.open_asks(load("asks.jsonl"))
+    except Exception:
+        open_asks = []
+    if open_asks:
+        n_sys = sum(1 for a in open_asks if a.get("kind") == "system")
+        print("\n  Your Move carries %d open ask(s) (%d system/tooling) — see the dashboard."
+              % (len(open_asks), n_sys))
 
     # ---- 3b. open QUESTIONS from the JD fit analysis ---------------------------
     # ⭐⭐ ADDED 2026-08-03. The candidate: "does the coordinator know to suggest a draft a nudge to
     # <a recruiter> for today?" It did NOT — this file mentioned `fit` zero times, so 28 open questions
-    # produced by the fit analysis were invisible to the one session he works in. Same failure
+    # produced by the fit analysis were invisible to the one session the candidate works in. Same failure
     # as the dashboard that morning: analysis written but never surfaced is analysis nobody has.
     #
     # ACT-BY FIRST, and anything due today or overdue is called out, because a dated question is

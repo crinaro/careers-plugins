@@ -14,10 +14,10 @@ to drafts, but not the dashboard, why?"*
 
 That is the worst possible place for the gap, because the coordinator is the session the candidate actually
 works in, and CLAUDE.md's own rule says **"the candidate reads the full text off the dashboard, not the
-transcript."** So the one session whose entire output he consumes visually was the one session
-that never published. Measured that morning: `drafts.md` was rewritten at 10:58, 11:02, 11:08,
-11:13 and 11:14, while `dashboard.html` sat untouched since 10:51 — five rounds of drafting he
-could not see.
+transcript."** So the one session whose entire output the candidate consumes visually was the one
+session that never published. Measured that morning: `drafts.md` was rewritten at 10:58, 11:02,
+11:08, 11:13 and 11:14, while `dashboard.html` sat untouched since 10:51 — five rounds of drafting
+the candidate could not see.
 
 **Why a script and not a line in the prompt.** The prompts already carried the step and it still
 went missing, because the step lived in the runs and the writing happened in the session. A rule
@@ -51,9 +51,13 @@ DASH = os.path.join(ROOT, "dashboard.html")
 ARTIFACT = os.path.join(ROOT, "dashboard_artifact.html")
 
 # Everything the dashboard renders. If one of these moved, the dashboard is behind it.
+# (focus.md left this list with dev #93 — the generator no longer reads it; asks.jsonl and
+# commitments.jsonl are the stores that replaced it. messages.jsonl joined too: channel
+# touch derivation reads it, so a new outbound message can change Your Move.)
 SOURCES = [
-    "focus.md", "drafts.md", "cover_letters.md", "network.md",
+    "drafts.md", "cover_letters.md", "network.md",
     "data/opportunities.jsonl", "data/companies.jsonl", "data/channels.jsonl",
+    "data/messages.jsonl", "data/asks.jsonl", "data/commitments.jsonl",
 ]
 
 
@@ -101,7 +105,7 @@ def main():
         mins = secs // 60
         print("  %-32s newer by %s" % (s, "%d min" % mins if mins else "%d sec" % secs))
     print("\n  the candidate reads the full text of drafts and letters OFF THE DASHBOARD, not the")
-    print("  transcript. A stale dashboard means work he cannot see — on 2026-08-03 that was")
+    print("  transcript. A stale dashboard means work the candidate cannot see — on 2026-08-03 that was")
     print("  five rounds of outreach drafting between 10:58 and 11:14.")
     print("\n  Fix:  python3 scripts/check_dashboard_fresh.py --fix")
     print("  Then publish with the Artifact tool, passing dashboard_artifact_url.txt as `url`.")

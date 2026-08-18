@@ -1,214 +1,288 @@
 {
-  "_README": "MACHINE-READABLE DATA MODEL — the definition scripts/record.py enforces BEFORE writing, and scripts/validate_data.py checks after. Rationale: docs/adr-011-schema-enforcement.md.",
-  "_enums_note": "ENUMS ARE NOT DUPLICATED HERE. scripts/validate_data.py owns them; record.py imports that module. Restating a value list in two files is the drift this whole repo keeps fighting.",
-  "stores": {
-    "opportunities": {
-      "id_field": "id",
-      "fields": [
-        "id",
-        "company_id",
-        "title",
-        "comp",
-        "location",
-        "status",
-        "stage",
-        "verdict",
-        "jd_url",
-        "channel_id",
-        "sightings",
-        "next_action",
-        "next_action_owner",
-        "next_action_date",
-        "blocked_until",
-        "research_log",
-        "outreach",
-        "contacts",
-        "applications",
-        "fit",
-        "note"
-      ],
-      "required": [
-        "id",
-        "company_id",
-        "title",
-        "status",
-        "stage",
-        "verdict"
-      ],
-      "arrays": {
-        "outreach": {
-          "fields": [
-            "address_status",
-            "campaign_id",
-            "channel_id",
-            "contact_id",
-            "date",
-            "delivery",
-            "medium",
-            "message_ref",
-            "note",
-            "outcome",
-            "recipient_role",
-            "responded_on",
-            "status",
-            "to",
-            "touch_type",
-            "variant"
-          ],
-          "required": [
-            "date",
-            "medium",
-            "status"
-          ],
-          "id_field": null
-        },
-        "contacts": {
-          "fields": [
-            "contact_id",
-            "name",
-            "email",
-            "email_status",
-            "linkedin",
-            "path_type",
-            "role",
-            "status",
-            "note"
-          ],
-          "required": [
-            "contact_id",
-            "name"
-          ],
-          "id_field": "contact_id"
-        },
-        "applications": {
-          "fields": [
-            "date",
-            "method",
-            "status",
-            "url",
-            "req_id",
-            "cover_letter",
-            "cover_letter_attached",
-            "cover_letter_doc",
-            "portal_status",
-            "portal_confirmed_on",
-            "note"
-          ],
-          "required": [
-            "date",
-            "method",
-            "status"
-          ],
-          "id_field": null
-        },
-        "sightings": {
-          "fields": [
-            "channel_id",
-            "seen_on",
-            "snippet",
-            "source_url"
-          ],
-          "required": [
-            "channel_id",
-            "seen_on"
-          ],
-          "id_field": null
-        },
-        "research_log": {
-          "fields": [
-            "date",
-            "note"
-          ],
-          "required": [
-            "date",
-            "note"
-          ],
-          "id_field": null
-        },
-        "fit.requirements": {
-          "fields": [
-            "requirement",
-            "verdict",
-            "evidence",
-            "pitch_line",
-            "question_for_candidate",
-            "question_status",
-            "answered_on",
-            "landed_in",
-            "act_by"
-          ],
-          "required": [
-            "requirement",
-            "verdict"
-          ],
-          "id_field": null
-        }
-      }
+ "_README": "MACHINE-READABLE DATA MODEL — the definition scripts/record.py enforces BEFORE writing, and scripts/validate_data.py checks after. Rationale: docs/adr-011-schema-enforcement.md.",
+ "_enums_note": "ENUMS ARE NOT DUPLICATED HERE. scripts/validate_data.py owns them; record.py imports that module. Restating a value list in two files is the drift this whole repo keeps fighting.",
+ "stores": {
+  "opportunities": {
+   "id_field": "id",
+   "fields": [
+    "id",
+    "company_id",
+    "title",
+    "comp",
+    "location",
+    "status",
+    "stage",
+    "play_stage",
+    "verdict",
+    "jd_url",
+    "channel_id",
+    "sightings",
+    "next_action",
+    "next_action_owner",
+    "next_action_date",
+    "blocked_until",
+    "research_log",
+    "outreach",
+    "contacts",
+    "applications",
+    "fit",
+    "note"
+   ],
+   "required": [
+    "id",
+    "company_id",
+    "title",
+    "status",
+    "stage",
+    "verdict"
+   ],
+   "arrays": {
+    "outreach": {
+     "fields": [
+      "address_status",
+      "campaign_id",
+      "channel_id",
+      "contact_id",
+      "date",
+      "delivery",
+      "medium",
+      "message_ref",
+      "note",
+      "outcome",
+      "recipient_role",
+      "responded_on",
+      "status",
+      "to",
+      "touch_type",
+      "variant"
+     ],
+     "required": [
+      "date",
+      "medium",
+      "status"
+     ],
+     "id_field": null
     },
-    "companies": {
-      "id_field": "id",
-      "fields": [
-        "id",
-        "name",
-        "vertical",
-        "status",
-        "size",
-        "note",
-        "research_log",
-        "hq"
-      ],
-      "required": [
-        "id",
-        "name",
-        "vertical",
-        "status"
-      ],
-      "arrays": {}
+    "contacts": {
+     "fields": [
+      "contact_id",
+      "name",
+      "email",
+      "email_status",
+      "linkedin",
+      "path_type",
+      "role",
+      "status",
+      "note"
+     ],
+     "required": [
+      "contact_id",
+      "name"
+     ],
+     "id_field": "contact_id"
     },
-    "channels": {
-      "id_field": "id",
-      "fields": [
-        "id",
-        "label",
-        "type",
-        "review_cadence",
-        "last_reviewed",
-        "scope_notes",
-        "contacts",
-        "relationship_status",
-        "log",
-        "next_touch",
-        "access"
-      ],
-      "required": [
-        "id",
-        "label",
-        "type"
-      ],
-      "arrays": {
-        "contacts": {
-          "fields": [
-            "contact_id",
-            "name",
-            "email",
-            "role",
-            "note"
-          ],
-          "required": [
-            "name"
-          ],
-          "id_field": "contact_id"
-        }
-      }
+    "applications": {
+     "fields": [
+      "date",
+      "method",
+      "status",
+      "url",
+      "req_id",
+      "cover_letter",
+      "cover_letter_attached",
+      "cover_letter_doc",
+      "portal_status",
+      "portal_confirmed_on",
+      "note"
+     ],
+     "required": [
+      "date",
+      "method",
+      "status"
+     ],
+     "id_field": null
+    },
+    "sightings": {
+     "fields": [
+      "channel_id",
+      "seen_on",
+      "snippet",
+      "source_url"
+     ],
+     "required": [
+      "channel_id",
+      "seen_on"
+     ],
+     "id_field": null
+    },
+    "research_log": {
+     "fields": [
+      "date",
+      "note"
+     ],
+     "required": [
+      "date",
+      "note"
+     ],
+     "id_field": null
+    },
+    "fit.requirements": {
+     "fields": [
+      "requirement",
+      "verdict",
+      "evidence",
+      "pitch_line",
+      "question_for_candidate",
+      "question_status",
+      "answered_on",
+      "landed_in",
+      "act_by"
+     ],
+     "required": [
+      "requirement",
+      "verdict"
+     ],
+     "id_field": null
     }
+   }
   },
-  "banned_aliases": {
-    "_why": "The SAME meaning under two spellings silently splits a query. Rationale: docs/adr-011-schema-enforcement.md.",
-    "notes": "note",
-    "comment": "note",
-    "remarks": "note",
-    "sent_on": "date",
-    "replied_on": "responded_on",
-    "channel": "channel_id"
+  "companies": {
+   "id_field": "id",
+   "fields": [
+    "id",
+    "name",
+    "vertical",
+    "status",
+    "size",
+    "note",
+    "research_log",
+    "hq"
+   ],
+   "required": [
+    "id",
+    "name",
+    "vertical",
+    "status"
+   ],
+   "arrays": {}
+  },
+  "channels": {
+   "id_field": "id",
+   "fields": [
+    "id",
+    "label",
+    "type",
+    "review_cadence",
+    "last_reviewed",
+    "scope_notes",
+    "contacts",
+    "relationship_status",
+    "log",
+    "next_touch",
+    "access"
+   ],
+   "required": [
+    "id",
+    "label",
+    "type"
+   ],
+   "arrays": {
+    "contacts": {
+     "fields": [
+      "contact_id",
+      "name",
+      "email",
+      "role",
+      "note"
+     ],
+     "required": [
+      "name"
+     ],
+     "id_field": "contact_id"
+    }
+   }
+  },
+  "messages": {
+   "_note": "dev #83 — declared 2026-08-14. Load-bearing for your_move.derive_channel_last_touch (joins on contacts[].contact_id), previously invisible to this file even though validate_data.py has enforced it structurally (independently, ~lines 193-252) since 2026-08-02. 'required' here is exactly what that enforcement demands UNCONDITIONALLY; it CANNOT express the anchor rule (opp_id OR channel_id, at least one) because 'required' is an AND list — see validate_data.py's own check for that. Unlike opportunities, nothing yet feeds this entry into the unknown-key guard, so 'fields' is not enforced against messages.jsonl today.",
+   "id_field": "id",
+   "fields": [
+    "id",
+    "opp_id",
+    "channel_id",
+    "contact_id",
+    "direction",
+    "medium",
+    "sent_on",
+    "from",
+    "to",
+    "subject",
+    "body",
+    "source",
+    "variant"
+   ],
+   "required": [
+    "direction",
+    "sent_on",
+    "medium",
+    "body",
+    "source"
+   ],
+   "arrays": {}
+  },
+  "asks": {
+   "_note": "dev #93 (public #21) - the hand-authored tail of Your Move and the Process Needs list, cut over from focus.md prose. An ask is OPEN until resolved_on is set; every view filters resolved rows out, so expulsion is structural rather than an editing habit. kind=role renders in the Your Move queue; kind=system renders in the System & tooling group. Not for anything derivable from a record: a role decision belongs on the opportunity (next_action_owner), a relationship touch on the channel (next_touch).",
+   "id_field": "id",
+   "fields": [
+    "id",
+    "kind",
+    "title",
+    "ask",
+    "created",
+    "act_by",
+    "opp_id",
+    "channel_id",
+    "resolved_on",
+    "resolution",
+    "note"
+   ],
+   "required": [
+    "id",
+    "kind",
+    "title",
+    "ask",
+    "created"
+   ],
+   "arrays": {}
+  },
+  "commitments": {
+   "_note": "dev #93 (public #21) - scheduled commitments, cut over from focus.md's 'This Week' prose. The This Week tab renders date >= today; meeting_check.py and watch.py reconcile calendar artifacts against ALL rows (a meeting next month is still reconciled). date may be the literal 'unresolved' - the migration marker for a commitment whose date could not be parsed - which renders as a loud defect, never silently dropped. who carries the counterparty tokens the date-collision check matches on; a date alone is not an identity.",
+   "id_field": "id",
+   "fields": [
+    "id",
+    "date",
+    "time",
+    "title",
+    "who",
+    "opp_id",
+    "channel_id",
+    "source",
+    "note"
+   ],
+   "required": [
+    "id",
+    "date",
+    "title"
+   ],
+   "arrays": {}
   }
+ },
+ "banned_aliases": {
+  "_why": "The SAME meaning under two spellings silently splits a query. Rationale: docs/adr-011-schema-enforcement.md.",
+  "notes": "note",
+  "comment": "note",
+  "remarks": "note",
+  "sent_on": "date",
+  "replied_on": "responded_on",
+  "channel": "channel_id"
+ }
 }

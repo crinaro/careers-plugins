@@ -6,12 +6,12 @@
 A multi-part sequence stages part A (sent) and part B (held until the recipient accepts or
 replies). The precondition on part B lived in `**Status:**` prose, so **the dashboard rendered
 every staged draft under a heading meaning "awaiting your approval to send"** — including the ones
-the candidate cannot act on at all. One observed state: seven items presented as needing him, one
+the candidate cannot act on at all. One observed state: seven items presented as needing them, one
 genuinely actionable.
 
-That inverts the surface. `focus.md`'s invariant is that a Your Move line must read as a question
+That inverts the surface. The decision surface's invariant is that a Your Move line must read as a question
 or an imperative aimed at the candidate, and **a draft that cannot be sent yet is neither**. The
-predictable result is that he learns to skim the one list that is supposed to be unskippable.
+predictable result is that the candidate learns to skim the one list that is supposed to be unskippable.
 
 ⭐⭐ AND THE DATA WAS ALREADY THERE. Every outreach touch carries `outcome`
 (awaiting/accepted/replied/…), `responded_on`, `contact_id` and `message_ref`. The system could
@@ -262,7 +262,7 @@ def main():
         print(line)
         if n_block:
             print("  ⭐ Blocked drafts must NOT render as 'needs you'. A line there has to be a")
-            print("     question or an imperative aimed at the candidate; a draft he cannot send")
+            print("     question or an imperative aimed at the candidate; a draft the candidate cannot send")
             print("     is neither, and padding that list is how it stops being read.")
         if n_unres:
             print("  🚧 An unresolved draft is treated as blocked, not sendable — 'no draft is")

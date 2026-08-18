@@ -67,7 +67,7 @@ Run the weekly strategy review of the candidate's search. Read `CLAUDE.md` first
 ~/.claude/jobsearch/run check_stale_claims.py         # decayed claims — verify against the machine
 ~/.claude/jobsearch/run check_followups.py            # silent threads
 ~/.claude/jobsearch/run check_action_claims.py        # a hand-authored ask the data already answered (#43)
-~/.claude/jobsearch/run check_sections.py             # focus.md invariants
+~/.claude/jobsearch/run check_sections.py             # ask/commitment invariants (dev #93)
 ~/.claude/jobsearch/run validate_data.py              # schema · enums · referential integrity
 ~/.claude/jobsearch/run channels_due.py               # which sources are due
 ~/.claude/jobsearch/run check_rule_homes.py           # no archived lesson lost its rule
@@ -123,7 +123,7 @@ Every item leaves exactly one of four ways:
 
 **⚠️ BEFORE ARCHIVING, CHECK THE LESSON HAS A DURABLE HOME** — `CLAUDE.md`, an agent definition,
 a task prompt, a config key, or a test. **Archiving an item whose rule lives nowhere else DELETES
-the knowledge, and a rule that only ever lived in a `focus.md` bullet was never really a rule.**
+the knowledge, and a rule that only ever lived in a tracker bullet was never really a rule.**
 
 ## 2. FIX IT YOURSELF — the approval gate is narrower than it looks
 
@@ -132,10 +132,10 @@ the knowledge, and a rule that only ever lived in a `focus.md` bullet was never 
 **Do not hand the candidate a queue of things you could have done.** Fix your own bugs, scripts,
 data and cadences; run the tool to verify; report them DONE.
 
-**Genuinely needs him:** sending or publishing anything outward-facing · applying to a role · a
-fact only he has · a judgment only he can make (pursue/pass, comp tradeoffs, which firms to
-approach). **A decision he has already pre-decided by setting a rule is NOT a new decision** — if
-his own stated rule determines the answer, the answer is arithmetic, not an approval.
+**Genuinely needs the candidate:** sending or publishing anything outward-facing · applying to a role · a
+fact only they have · a judgment only they can make (pursue/pass, comp tradeoffs, which firms to
+approach). **A decision they have already pre-decided by setting a rule is NOT a new decision** — if
+their own stated rule determines the answer, the answer is arithmetic, not an approval.
 
 **The one real gate:** the *strategist* must not silently rewrite task prompts, agent definitions
 or scripts on its own say-so. You verifying a claim and then fixing the thing yourself is not that.

@@ -13,15 +13,15 @@ mean one of two things:
 
   **(a) something DELIVERS A TURN to it** — `notifyOnCompletion` on a scheduled task. That is a
       genuine wake, and the only one available. **But only a REGULAR session can claim it** (a
-      scheduled run is refused: *"it ends when the run does"*), so the candidate claims it himself, and
-      re-claims it each time he opens a new coordinator session.
+      scheduled run is refused: *"it ends when the run does"*), so the candidate claims it directly, and
+      re-claims it each time they open a new coordinator session.
 
   **(b) it CHECKS at the start of a turn** — which needs something to compare against. That is
       this script.
 
 **Why (b) matters even with (a) working, and it is not a nicety.** A background run can write
-state *while the candidate is mid-conversation* — his session read `data/*.jsonl` several turns ago and is
-reasoning from that. A notification tells him a run *finished*; it does not tell his session that
+state *while the candidate is mid-conversation* — their session read `data/*.jsonl` several turns ago and is
+reasoning from that. A notification tells the candidate a run *finished*; it does not tell their session that
 the ground it is standing on moved. **Acting on a stale read is a correctness bug, not a missed
 alert** — it is how a session would confidently re-draft an outreach note for a reply that already
 arrived.
@@ -37,7 +37,7 @@ time whether anything changed since. Cheap — size + mtime, no parsing, no hash
     work by telling the candidate a reply still needed drafting. It had been sent and recorded
     eight hours earlier by a concurrent run; the watermark said STALE the whole time and was
     never consulted, because the rule only mentioned writes. **Reporting stale state costs the
-    same as writing it** — he acted on "you still owe Alex a reply" when he had already sent it.
+    same as writing it** — the candidate acted on "you still owe Alex a reply" after already sending it.
     Run this before any status summary, not just before an edit.
 
 Usage:
@@ -64,10 +64,10 @@ ROOT = _profile_root()
 # made this guard actively dangerous the moment a second session existed, i.e. always, since the
 # whole coordinator + background design is about concurrent sessions.
 #
-# Found while answering the candidate's question "do I need to run /coordinator to get the update": his
-# session marked the watermark at 06:41; my work overwrote it at 07:15; his session then asked
+# Found while answering the candidate's question "do I need to run /coordinator to get the update": their
+# session marked the watermark at 06:41; my work overwrote it at 07:15; their session then asked
 # "did anything move since I looked?" and got **"UNCHANGED since 07:15 — safe to write."** That
-# is false for him — three commits landed in between, including a log.md rewrite that moved 106
+# is false for them — three commits landed in between, including a log.md rewrite that moved 106
 # entries. **It failed OPEN**, handing out a confident all-clear, which is worse than no guard at
 # all: the one job of this script is to catch exactly that stale read.
 MARK_DIR = os.path.join(ROOT, ".git", "watermarks")   # untracked, per-machine
@@ -80,7 +80,10 @@ def mark_path(reader):
 WATCHED = [
     "data/opportunities.jsonl", "data/companies.jsonl", "data/channels.jsonl",
     "data/messages.jsonl", "data/inbox.jsonl",
-    "focus.md", "drafts.md", "cover_letters.md", "log.md",
+    # dev #93 — the asks and commitments stores replaced focus.md; handoff.md is the
+    # surviving hand-written narrative a session reasons from.
+    "data/asks.jsonl", "data/commitments.jsonl",
+    "handoff.md", "drafts.md", "cover_letters.md", "log.md",
 ]
 
 

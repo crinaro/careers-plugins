@@ -48,6 +48,23 @@ CADENCES = {"daily", "weekly", "biweekly", "monthly", "on-inbound"}
 # retroactively distinguish a genuine park from the workaround (adr-013).
 OPP_STATUS = {"active-pursuit", "needs-resolution", "in-motion", "backlog", "passed", "expired"}
 STAGES = {"sourced", "contacted", "screening", "interviewing", "offer", "closed"}
+# ⭐ `play_stage` — where a pursued role sits in the POST-APPLICATION PLAY (public #19 / dev
+# #95). `stage` is the funnel position; the play sequence is finer-grained: which step of the
+# apply-then-reach-the-recruiter play is next. It used to be encoded as numbered free-text
+# markers prefixed onto `next_action`, which nothing could filter, group, count, sort or
+# validate — the fourth instance of "a fact a run knows goes into the queryable store"
+# (act_by, precondition.py, location 'unresolved'). ORDERED, so consumers can sort by
+# sequence position rather than alphabetically.
+PLAY_SEQUENCE = ("needs-application", "applied", "needs-recruiter-contact", "verify-req-live",
+                 "identify-recruiter", "reach-insider", "contact-recruiter", "awaiting-reply")
+# `unresolved` is the migration marker (same precedent as blocked_until and location.type): a
+# play position was detected in prose but could not be structured mechanically. Valid, durable,
+# and deliberately NOT part of the sequence — the way out is a human writing the real value.
+PLAY_STAGES = set(PLAY_SEQUENCE) | {"unresolved"}
+# Every play position from `applied` onward presupposes a submitted application on the record.
+POST_APPLICATION_PLAY = set(PLAY_SEQUENCE[1:])
+# applications[].status values that prove a submission actually happened.
+SUBMITTED_APP_STATUS = {"submitted", "acknowledged", "rejected", "advanced"}
 VERDICTS = {"pursue", "pass", "parked", "undecided"}
 # `unresolved` added 2026-08-11 (issue #4): a posting that declares two settings at once (e.g.
 # tagged both hybrid and remote) previously forced a silent pick, and the pick selected which
@@ -80,7 +97,7 @@ OUTREACH_OUTCOME = {"awaiting", "replied", "no-response", "declined",
 # `accepted` added 2026-08-02 (the candidate's Decision 2). An accepted connection request that drew
 # no reply is a REAL positive signal for the connection-note medium — the candidate's own stated
 # mechanism is that the accept is what unlocks a better second touch. Scoring it identically
-# to "ignored" made the medium he believes in look weaker than it is. Reported on its own
+# to "ignored" made the medium the candidate believes in look weaker than it is. Reported on its own
 # line, never merged into `replied`.
 
 # ---- Communications: HOW a message was sent, and what kind it was (added 2026-08-02) ----
@@ -129,6 +146,14 @@ FIT_Q_STATUS = {"n/a", "open", "answered"}
 # candidate's own name literally: zero live records used that value, so this was a rename with
 # no data to migrate, not a schema change.
 ACCESS = set(_route.REQUIREMENTS) | set(_route.LEGACY) | {"manual-candidate"}
+# ---- Asks and commitments (dev #93 / public #21) ----------------------------------------
+# The hand-authored tail of Your Move and the This Week schedule were the last state living in
+# focus.md prose, where a hand-written copy of a record went stale beside the generated row.
+# They are stores now: an ask is OPEN until `resolved_on` is set (views filter, so expulsion is
+# structural), and a commitment's `date` may be the literal `unresolved` — the migration marker
+# for a date that could not be parsed, same precedent as blocked_until and play_stage.
+ASK_KINDS = {"role", "system"}
+UNRESOLVED = "unresolved"
 
 
 def load(name):
@@ -227,7 +252,7 @@ def main():
             problems.append("%s: direction %r must be inbound|outbound|third-party"
                             % (ml, m.get("direction")))
         # Provenance is required: a stored body with no traceable source is an assertion,
-        # not a record. Format: gmail:<account>:<uid>, or 'drafts.md' for one the candidate sent himself.
+        # not a record. Format: gmail:<account>:<uid>, or 'drafts.md' for one the candidate sent directly.
         # ⭐ A MESSAGE'S contact_id MUST RESOLVE — to an opportunity's contacts[] OR a channel's.
         # Added 2026-08-04 after THREE guessed ids passed unnoticed in one afternoon:
         # 'derek-holland' for 'derek-holland-acme', 'priya-nakamura' for
@@ -245,7 +270,7 @@ def main():
         if m.get("sent_on") and not is_date(m["sent_on"]):
             problems.append("%s: sent_on not ISO — %r" % (ml, m.get("sent_on")))
         # MEDIA is the OUTREACH taxonomy — it exists to answer "which of the candidate's own
-        # channels works". A third-party message is not his outreach, so a plain generic is
+        # channels works". A third-party message is not their outreach, so a plain generic is
         # correct for it and forcing e.g. 'email-cold' would corrupt the funnel denominators.
         msg_media = MEDIA | {"email"} if m.get("direction") == "third-party" else MEDIA
         if m.get("medium") and m["medium"] not in msg_media:
@@ -350,6 +375,36 @@ def main():
         enum(r, "status", OPP_STATUS, label, problems)
         enum(r, "stage", STAGES, label, problems)
         enum(r, "verdict", VERDICTS, label, problems)
+
+        # ---- play_stage: the post-application play position (public #19 / dev #95) ----
+        # Optional and nullable — but an unreadable value must be LOUD, never carried: a play
+        # position nobody can parse looks handled and is not (the precondition.py rule).
+        ps = r.get("play_stage")
+        if ps is not None:
+            if ps not in PLAY_STAGES:
+                problems.append("%s: play_stage %r not in {%s} — an unreadable play position "
+                                "looks handled and is not; fix the value or null the field"
+                                % (label, ps, ", ".join(sorted(PLAY_STAGES))))
+            else:
+                # Resolve against data the store ALREADY has, the same move as act_by and
+                # precondition.py: the applications[] array is the evidence of submission.
+                submitted = any(a.get("status") in SUBMITTED_APP_STATUS
+                                for a in (r.get("applications") or []))
+                if ps == "needs-application" and submitted:
+                    problems.append("%s: play_stage 'needs-application' but an applications[] "
+                                    "row is already %s — the store knows this role was applied "
+                                    "to; advance the play_stage" %
+                                    (label, "/".join(sorted(SUBMITTED_APP_STATUS))))
+                if ps in POST_APPLICATION_PLAY and not submitted:
+                    problems.append("%s: play_stage %r presupposes a submitted application, but "
+                                    "no applications[] row has status in {%s} — a post-"
+                                    "application play on a role never applied to is a claim the "
+                                    "store contradicts" %
+                                    (label, ps, ", ".join(sorted(SUBMITTED_APP_STATUS))))
+                if r.get("status") in ("passed", "expired"):
+                    problems.append("%s: status %r with play_stage %r — a terminal role has no "
+                                    "live play position; null the field when a role leaves the "
+                                    "funnel" % (label, r.get("status"), ps))
 
         # referential integrity
         if r.get("company_id") not in company_ids:
@@ -603,8 +658,83 @@ def main():
                             "decision was made before the posting vanished; if the candidate "
                             "decided to pass, the status is 'passed'" % label)
 
-    print("Data validation — %d companies, %d channels, %d opportunities" %
-          (len(companies), len(channels), len(opps)))
+    # ---- asks (dev #93) — the hand-authored tail of Your Move, structured ----
+    # Absence is legal: a profile predating the 0.25.0 migration has no asks.jsonl yet, and
+    # the fixture ships without one. Present-but-broken is a problem like any other store.
+    asks, e = load("asks.jsonl")
+    if asks is None:
+        asks = []
+    else:
+        problems += e or []
+    ask_ids = set()
+    for r in asks:
+        aid = r.get("id", "?")
+        label = "asks[%s]" % aid
+        for f in ("id", "kind", "title", "ask", "created"):
+            req(r, f, label, problems)
+        if r.get("id") in ask_ids:
+            problems.append("%s: duplicate id" % label)
+        ask_ids.add(r.get("id"))
+        enum(r, "kind", ASK_KINDS, label, problems)
+        if not is_date(r.get("created", "")):
+            problems.append("%s: created not ISO — %r" % (label, r.get("created")))
+        for f in ("act_by", "resolved_on"):
+            v = r.get(f)
+            if v is not None and f in r and not is_date(v):
+                problems.append("%s: %s not ISO or null — %r" % (label, f, v))
+        if r.get("opp_id") and r["opp_id"] not in opp_ids:
+            problems.append("%s: opp_id %r resolves to no opportunity" % (label, r["opp_id"]))
+        if r.get("channel_id") and r["channel_id"] not in channel_ids:
+            problems.append("%s: channel_id %r resolves to no channel" % (label, r["channel_id"]))
+        # An ask that is resolved must say how it resolved — "expelled" with no outcome is
+        # the old delete-the-prose move with less accountability, not more.
+        if r.get("resolved_on") and not r.get("resolution"):
+            problems.append("%s: resolved_on with no resolution — say how it resolved "
+                            "(answered / lapsed / superseded / done)" % label)
+
+    # ---- commitments (dev #93) — This Week, structured ----
+    commitments, e = load("commitments.jsonl")
+    if commitments is None:
+        commitments = []
+    else:
+        problems += e or []
+    cm_ids = set()
+    for r in commitments:
+        cid = r.get("id", "?")
+        label = "commitments[%s]" % cid
+        for f in ("id", "date", "title"):
+            req(r, f, label, problems)
+        if r.get("id") in cm_ids:
+            problems.append("%s: duplicate id" % label)
+        cm_ids.add(r.get("id"))
+        d = r.get("date")
+        if d is not None and not is_date(d) and d != UNRESOLVED:
+            # An unreadable date must be LOUD (the precondition.py rule): a commitment nobody
+            # can place on a calendar looks handled and is not.
+            problems.append("%s: date %r is neither ISO nor the literal %r" % (label, d, UNRESOLVED))
+        if r.get("opp_id") and r["opp_id"] not in opp_ids:
+            problems.append("%s: opp_id %r resolves to no opportunity" % (label, r["opp_id"]))
+        if r.get("channel_id") and r["channel_id"] not in channel_ids:
+            problems.append("%s: channel_id %r resolves to no channel" % (label, r["channel_id"]))
+
+    # Unknown-key guard for both new stores — same model-driven rule opportunities already
+    # gets, because `nxet_action_owner` is exactly the class of typo these fields will grow.
+    if _model:
+        _ali = {k: v for k, v in _model["banned_aliases"].items() if not k.startswith("_")}
+        for store_name, rows_ in (("asks", asks), ("commitments", commitments)):
+            _sspec = _model["stores"].get(store_name) or {}
+            for r in rows_:
+                _l = "%s[%s]" % (store_name, r.get("id", "?"))
+                for _k in r:
+                    if _k in _ali:
+                        problems.append("%s: %r is a banned alias for %r" % (_l, _k, _ali[_k]))
+                    elif _k not in (_sspec.get("fields") or ()):
+                        problems.append("%s: unknown key %r (known: %s)"
+                                        % (_l, _k, ", ".join(sorted(_sspec.get("fields") or ()))))
+
+    print("Data validation — %d companies, %d channels, %d opportunities, %d asks, "
+          "%d commitments" % (len(companies), len(channels), len(opps), len(asks),
+                              len(commitments)))
     if not problems:
         print("\n  Clean. Schema, enums, types, and every cross-reference resolve.")
         return 0

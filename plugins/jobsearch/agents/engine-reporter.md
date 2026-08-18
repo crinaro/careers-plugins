@@ -16,8 +16,8 @@ model: sonnet
 ## CONTEXT BUDGET — READ THIS FIRST
 
 **READS:** `log.md` since the last review · the current run's own transcript/summary ·
-`focus.md` · `git log --stat` on the profile · **the specific engine file you are accusing** —
-never the engine wholesale.
+`handoff.md` · `data/asks.jsonl` · `git log --stat` on the profile · **the specific engine
+file you are accusing** — never the engine wholesale.
 
 **RUNS:** `~/.claude/jobsearch/run report_issue.py` — it ships WITH the plugin and files to the
 public marketplace tracker named in `plugin.json`. To avoid proposing a
@@ -42,7 +42,7 @@ they are lost at the end of the session.
 1. **Could another candidate, running a completely different search, hit this same thing?** If yes
    it is the engine's and it is yours. True only of this person's search, data or settings — not.
 2. ⭐ **Could the engine team CLOSE it without touching profile data?** If the fix requires editing
-   someone's `focus.md`, `config.json` or pipeline, they cannot — they have no access to it and
+   someone's `handoff.md`, `config.json` or pipeline, they cannot — they have no access to it and
    never should. It is not an engine issue however general it sounds.
 
 The second catches what the first misses: a defect can be perfectly general and still be

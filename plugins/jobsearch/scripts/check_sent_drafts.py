@@ -2,7 +2,7 @@
 """Flag drafts/letters that have ALREADY BEEN SENT OR USED but are still shown as pending.
 
 ⭐ WHY THIS EXISTS (2026-08-03). The candidate, looking at the dashboard: *"on your move, i'm still seeing
-the drafts for <an employer> (what's wrong)"*. He was right. He had sent the email and
+the drafts for <an employer> (what's wrong)"*. The candidate was right. They had sent the email and
 applied with the cover letter attached; both facts were correctly written into `data/*.jsonl`, and
 **both entries were still sitting in `drafts.md` / `cover_letters.md` as "awaiting approval."**
 
@@ -11,9 +11,9 @@ entry is a SECOND, SEPARATE step, and anything that depends on remembering a sec
 eventually does not happen. It is the same shape as the lock bug fixed earlier the same day
 (`runlock.py --run`), and the same shape as the stale-dashboard bug before that.
 
-**What it costs when it slips:** the candidate's Your Move panel is his queue. An item that is actually
-DONE sitting in it is worse than noise — he either re-does the work, or he starts distrusting the
-panel, and a queue he distrusts stops being a queue.
+**What it costs when it slips:** the candidate's Your Move panel is their queue. An item that is actually
+DONE sitting in it is worse than noise — they either re-do the work, or they start distrusting the
+panel, and a queue they distrust stops being a queue.
 
 Heuristic and deliberately conservative: it matches a pending entry's heading against contact
 names and company names that already carry a `sent` outreach row or a `submitted`/`rejected`

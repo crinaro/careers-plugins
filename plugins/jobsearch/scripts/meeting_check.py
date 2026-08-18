@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Deterministic meeting-artifact sweep, cross-checked against focus.md's "This Week".
+Deterministic meeting-artifact sweep, cross-checked against data/commitments.jsonl.
 
 WHY THIS EXISTS
 ---------------
 Every meeting miss in this repo's history came from the same shape of failure: a
 calendar artifact arrived in the mailbox, a model-driven scan didn't surface it,
-and `focus.md`'s This Week stayed stale until the candidate noticed. It happened with the
+and the recorded schedule stayed stale until the candidate noticed. It happened with the
 <an employer> call, the <a recruiter>/<a firm> call, and — worst — the **<an employer> round-2
 interview booked for the NEXT MORNING**, which landed *inside* the 2PM scan's own
 window and was reported as "no new recruiter/human contact."
@@ -24,7 +24,8 @@ WHAT IT DOES
 1. Sweeps EVERY configured mailbox for calendar/meeting artifacts (invitations, acceptances,
    updates, cancellations, .ics attachments, and the booking-tool wording).
 2. Extracts every date-looking token from each subject.
-3. Diffs those against the dates already named in focus.md's `## 📅 This Week`.
+3. Diffs those against the dates already recorded in data/commitments.jsonl
+   (the store behind the This Week tab — dev #93).
 4. Prints anything found in the mail but ABSENT from This Week as a loud
    ⚠️ UNRECONCILED block.
 
@@ -50,6 +51,7 @@ Python 3.9+. Standard library only.
 
 import argparse
 import datetime
+import json
 import os
 import re
 import sys
@@ -71,7 +73,10 @@ except ImportError as exc:  # pragma: no cover - defensive
     sys.exit(2)
 
 ROOT = _profile_root()
-FOCUS = os.path.join(ROOT, "focus.md")
+# dev #93 — the schedule is a store now, not a focus.md section. This Week is a VIEW of
+# data/commitments.jsonl; this script reconciles against ALL rows, not the rendered window,
+# because a meeting next month recorded in the store is still reconciled.
+COMMITMENTS = os.path.join(ROOT, "data", "commitments.jsonl")
 
 # Artifact-shaped, not person-shaped. The 2026-07-20 lesson: when you want a meeting
 # time, search for the SHAPE OF THE RECORD, not for the person — the <a recruiter>/<a firm>
@@ -184,26 +189,35 @@ def tokens(text):
 
 
 def this_week_entries(default_year):
-    """Return (all_dates, per_line, section).
+    """Return (all_dates, per_row, present).
 
-    `per_line` is [(dates_on_that_line, identity_tokens)] — the unit that makes a date+who match
-    possible. A whole-section token bag would NOT work: it would let the Halloway Partners line's
-    tokens vouch for the Larkbridge Technology invite simply because both sit under This Week.
+    Reads data/commitments.jsonl (dev #93 — the This Week schedule is a store, not a
+    focus.md section). `per_row` is [(dates_on_that_row, identity_tokens)] — one entry per
+    commitment, which is the unit that makes a date+who match possible. A whole-store token
+    bag would NOT work: it would let the Halloway Partners row's tokens vouch for the
+    Larkbridge Technology invite simply because both are commitments. `present` is whether
+    the store exists at all — an absent store means nothing to reconcile against, which must
+    be said loudly, never read as "all reconciled".
     """
-    if not os.path.exists(FOCUS):
-        return set(), [], ""
-    text = open(FOCUS, encoding="utf-8").read()
-    start = text.find("## 📅 This Week")
-    if start < 0:
-        return set(), [], ""
-    nxt = text.find("\n## ", start + 5)
-    section = text[start:nxt if nxt > 0 else len(text)]
-    per_line = []
-    for line in section.splitlines():
-        d = norm_dates(line, default_year)
-        if d:
-            per_line.append((d, tokens(line)))
-    return norm_dates(section, default_year), per_line, section
+    if not os.path.exists(COMMITMENTS):
+        return set(), [], False
+    known, per_row = set(), []
+    with open(COMMITMENTS, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue                     # validate_data.py owns malformed-line errors
+            text = " ".join(str(row.get(k) or "") for k in ("title", "who", "note", "time"))
+            d = norm_dates(str(row.get("date") or ""), default_year) | \
+                norm_dates(text, default_year)
+            known |= d
+            if d:
+                per_row.append((d, tokens(text)))
+    return known, per_row, True
 
 
 def classify(future, art_tokens, per_line):
@@ -269,7 +283,7 @@ def sweep(account, query):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Meeting-artifact sweep vs focus.md This Week.")
+    ap = argparse.ArgumentParser(description="Meeting-artifact sweep vs data/commitments.jsonl.")
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--today", metavar="YYYY-MM-DD")
     ap.add_argument("--account", default=None)
@@ -284,15 +298,16 @@ def main():
 
     accounts = [args.account] if args.account else configured_accounts()
     query = "(%s) newer_than:%dd" % (MEETING_QUERY, args.days)
-    known, per_line, section = this_week_entries(today.year)
+    known, per_line, present = this_week_entries(today.year)
 
     print("Meeting-artifact check — window: last %d day(s), as of %s"
           % (args.days, today.isoformat()))
     print("=" * 72)
-    if not section:
-        print("!! focus.md has no '## 📅 This Week' section — nothing to reconcile against.")
+    if not present:
+        print("!! data/commitments.jsonl does not exist — nothing to reconcile against.")
+        print("   Every artifact below will read as NEW; that is missing data, not a schedule.")
     else:
-        print("This Week currently names %d date(s): %s"
+        print("Commitments currently name %d date(s): %s"
               % (len(known), ", ".join(sorted(known)) or "(none)"))
     if args.account:
         print("!! NARROWED to one account (%s) — NOT every configured mailbox." % args.account)
@@ -332,7 +347,7 @@ def main():
 
     print("\n" + "=" * 72)
     if collisions:
-        print("‼️  %d DATE COLLISION(S) — the date IS in This Week, but for SOMEONE ELSE."
+        print("‼️  %d DATE COLLISION(S) — the date IS in the commitments store, but for SOMEONE ELSE."
               % len(collisions))
         print("   This is the case the old date-only check waved through: on 2026-08-03 the")
         print("   Larkbridge invite for 08/05 was absorbed by the Halloway Partners entry already on")
@@ -342,7 +357,7 @@ def main():
             print("      from %s | received %s" % (frm, date))
             print("      date(s): %s" % ", ".join(dates))
             for d, tk in clash:
-                print("      This Week already has %s for: %s"
+                print("      a commitment already carries %s for: %s"
                       % (", ".join(sorted(d)), ", ".join(sorted(tk)[:6]) or "(unnamed)"))
         print("\n   CONFIRM VIA THE .ics — do not assume it is the meeting already listed.")
         print("=" * 72)
@@ -365,7 +380,7 @@ def main():
         print("      call this morning; read as a revision it is simply a corrected booking.")
         print("=" * 72)
     if unreconciled:
-        print("⚠️  %d ARTIFACT(S) NAME A FUTURE DATE NOT IN 'This Week' — GO READ THESE:"
+        print("⚠️  %d ARTIFACT(S) NAME A FUTURE DATE IN NO COMMITMENT ROW — GO READ THESE:"
               % len(unreconciled))
         for account, date, frm, subj, dates in unreconciled:
             print("  - [%s] %s" % (account, subj))
@@ -375,7 +390,7 @@ def main():
         print("  newest message in the thread schedules something tomorrow. Confirm the real")
         print("  time via gmail_get_attachment + scripts/parse_ics.py before writing it down.")
     elif seen and not undated:
-        print("No unreconciled future dates: every artifact matches This Week on DATE AND WHO.")
+        print("No unreconciled future dates: every artifact matches a commitment on DATE AND WHO.")
         print("(Still not proof the schedule is right — reschedules happen out of band.)")
     elif seen:
         # NEVER pair an all-clear with unresolved artifacts. Printing "every artifact matches"
@@ -383,7 +398,7 @@ def main():
         # this script exists to eliminate.
         print("NOT AN ALL-CLEAR — %d artifact(s) above have no readable date. Resolve those"
               % len(undated))
-        print("before treating This Week as reconciled.")
+        print("before treating the schedule as reconciled.")
     else:
         print("No meeting artifacts in the window.")
 

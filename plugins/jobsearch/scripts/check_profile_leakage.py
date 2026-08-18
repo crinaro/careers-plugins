@@ -69,7 +69,7 @@ ENGINE = (["CLAUDE.md", "docs/schema.md"]
 # The PROFILE: this person's data. Not audited — it is SUPPOSED to be full of them.
 USER_FILES = ["user.json", "resume.md", "projects.md", "network.md", "data/*.jsonl"]
 CONFIG_FILES = ["config.json", "strategy.md"]
-STATE_FILES = ["focus.md", "log.md", "process_archive.md"]
+STATE_FILES = ["focus.md", "handoff.md", "log.md", "process_archive.md"]
 
 # ⭐⭐ THE GUARD TERMS COME FROM THE PROFILE. THEY ARE NEVER WRITTEN HERE.
 #

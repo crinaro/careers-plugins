@@ -19,9 +19,9 @@ Two outputs, and the second is the durable one:
    the cover letter are built from a stated fit case instead of re-inventing positioning per
    draft.
 2. **Gap harvesting** — every requirement nothing on file corroborates becomes a targeted
-   question. His answer is filed into a store that already exists (`projects.md`,
+   question. Their answer is filed into a store that already exists (`projects.md`,
    `resume.md`'s "Additional Detail" addenda, or `kb_<company>.md`), so the NEXT role starts
-   from a fuller picture. His resume is deliberately incomplete; this is how the missing
+   from a fuller picture. Their resume is deliberately incomplete; this is how the missing
    context gets captured while a live role makes it concrete.
 
 **The counts here are COMPUTED every run, never stored.** Storing a summary is exactly how

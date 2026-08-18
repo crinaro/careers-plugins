@@ -138,8 +138,8 @@ distinguishable.
 
 **Default sequence — SENT TOGETHER, not sequentially:** the media named in
 `communications.default_sequence`. **This encodes the candidate's own stated behavior about which
-channels he reads and which he ignores** — it is DATA, and it has been corrected once already when
-a paraphrase generalized his word "message" into a different medium. Read it; never infer it.
+channels they read and which they ignore** — it is DATA, and it has been corrected once already when
+a paraphrase generalized their word "message" into a different medium. Read it; never infer it.
 `communications.last_resort` names the medium to avoid leading with.
 
 **A guessed `first.last@company.com` is PERMITTED** — flag it `address_status: pattern-inferred`
@@ -191,8 +191,8 @@ outcome flips.
 **Why this is a rule and not a nicety (GitHub issue #6).** The precondition used to live in
 `**Status:**` prose, so every staged draft rendered as needing the candidate — one observed state
 showed seven items of which one was actionable. A Your Move line must read as a question or an
-imperative aimed at him; **a draft he cannot send is neither**, and padding that list is how the
+imperative aimed at them; **a draft they cannot send is neither**, and padding that list is how the
 one list that must be unskippable stops being read.
 
 ⚠️ **Only add the field when there genuinely is a precondition.** A draft with no blocker needs no
-field, and inventing one hides work that is actually his to do.
+field, and inventing one hides work that is actually theirs to do.

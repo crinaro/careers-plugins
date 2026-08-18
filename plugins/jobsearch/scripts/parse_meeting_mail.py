@@ -36,7 +36,7 @@ is NOT proof of the current schedule. On 2026-07-20 this exact mistake was made:
 a 7/17 receipt reading "July 20 at 8:00 AM US/Eastern" was reported as the live
 meeting time, when the candidate had since rescheduled the call out of band. The script
 prints this warning on every run on purpose. Always confirm against a newer
-invite, the calendar, or the candidate himself before acting on the output.
+invite, the calendar, or the candidate directly before acting on the output.
 
 Targets system Python 3.8 (/usr/bin/python3): no zoneinfo, no third-party
 packages, no walrus, no X | Y annotations.

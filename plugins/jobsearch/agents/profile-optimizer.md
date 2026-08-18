@@ -21,7 +21,7 @@ model: sonnet
 **DOES NOT READ:** the pipeline JSONL · `log.md` · `drafts.md` · `cover_letters.md`.
 
 ⚠️ **An ABSENCE is a claim, not an observation.** On 2026-07-22 this agent reported the candidate's
-LinkedIn About section as "literally absent" — it existed, and he pasted the text. LinkedIn
+LinkedIn About section as "literally absent" — it existed, and the candidate pasted the text. LinkedIn
 lazy-loads and collapses sections. **Confirm any absence a second way (expand the section,
 check the public view, or ask) before reporting it**, and never build a recommendation on top
 of an unconfirmed absence.
@@ -57,9 +57,9 @@ Experience entry's bullets, Skills section, and Featured section if present. Com
 against resume.md and strategy.md's proof points. Look specifically for:
 - Real accomplishments in resume.md that are missing or underplayed on the live
   profile (e.g., a "Field CTO" match came back "medium" partly because
-  enterprise-architecture/API/cloud-native/agentic-AI terms aren't on his profile even
+  enterprise-architecture/API/cloud-native/agentic-AI terms aren't on their profile even
   though they're confirmed in resume.md — this class of gap is exactly what to find).
-- Keyword coverage relevant to his target roles (strategy.md's Target roles + Positioning
+- Keyword coverage relevant to their target roles (strategy.md's Target roles + Positioning
   proof points) — LinkedIn's own matching and recruiter search both weight profile text,
   not just the resume.
 - A headline and About section that undersell what's actually documented, or that read
@@ -76,7 +76,7 @@ question for the candidate rather than inventing detail.
 
 **Never edit the live profile.** Editing a public, identity-facing profile is at least
 as consequential as sending a message — output suggested copy for the candidate's review only;
-he applies changes himself (or explicitly authorizes a follow-up edit pass) after seeing
+they apply changes directly (or explicitly authorize a follow-up edit pass) after seeing
 them. Output a clear, prioritized list: what to change, the suggested replacement text,
 and why (which target role / JD pattern / gap it addresses).
 

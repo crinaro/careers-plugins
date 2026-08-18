@@ -73,6 +73,40 @@ LIVE_OPP_STATUSES = {"active-pursuit", "needs-resolution"}
 ROLE_STATES = ("unresolved", "waiting", "scheduled", "now")
 CHANNEL_STATES = ("now", "scheduled", "fulfilled")
 
+# Statuses on which a play position is meaningless — validate_data.py refuses the field on
+# these, and m_0_25_0_play_stage never writes the marker onto them.
+PLAY_TERMINAL_STATUSES = {"passed", "expired"}
+
+
+def unresolved_play_stages(opps):
+    """Every non-terminal row whose `play_stage` is the literal `unresolved` — the marker
+    m_0_25_0_play_stage writes when it finds a numbered play marker in prose but cannot name
+    the stage (dev #95). The way out is a human writing the real value
+    (`record.py set <id> play_stage <stage>`), and this is the consumer that keeps the marker
+    visible until that happens: without one, `unresolved` survives migration day looking
+    handled — the exact defect `blocked_until`'s unresolved callout already closes for holds.
+
+    ⭐ Deliberately NOT filtered by owner or by LIVE_OPP_STATUSES. The marker is data hygiene
+    on the record, not a Your Move ownership question — an owner filter would hide precisely
+    the rows nobody is currently looking at, and a backlog row keeps its marker too."""
+    return [o for o in opps
+            if o.get("play_stage") == "unresolved"
+            and o.get("status") not in PLAY_TERMINAL_STATUSES]
+
+
+def open_asks(asks, kind=None):
+    """The OPEN rows of data/asks.jsonl — the one definition of ask membership (dev #93).
+
+    An ask leaves every surface the moment `resolved_on` is set; nothing ever rewrites one
+    into a "✅ CONFIRMED" line in place, because the views only render what this returns.
+    That is focus.md's expel-resolved-items invariant made structural. Sorted soonest
+    act_by first (undated last), then by created, so the most time-sensitive ask leads.
+    `kind` narrows to "role" (the Your Move queue) or "system" (System & tooling)."""
+    rows = [a for a in asks
+            if not a.get("resolved_on") and (kind is None or a.get("kind") == kind)]
+    return sorted(rows, key=lambda a: (str(a.get("act_by") or "9999"),
+                                       str(a.get("created") or "")))
+
 
 def _load_jsonl(root, name):
     path = os.path.join(root, "data", name)
@@ -224,6 +258,10 @@ def report(root, today=None):
                       "derived_last_touch": t, "evidence": ev}
                      for c, s, t, ev in chans],
         "contact_joinability_gaps": contact_joinability_gaps(channels),
+        # dev #95 follow-on: the migration marker needs a consumer or it looks handled.
+        "play_unresolved": [{"id": o.get("id"), "title": o.get("title"),
+                             "status": o.get("status")}
+                            for o in unresolved_play_stages(opps)],
     }
 
 
@@ -254,10 +292,17 @@ def main():
             if c["state"] == "fulfilled":
                 print("        plan fulfilled on %s by %s" % (c["derived_last_touch"],
                                                                 c["evidence"]))
+        for p in data["play_unresolved"]:
+            print("  🎬 play-unres  %s" % ((p["title"] or p["id"] or "?")[:60]))
+            print("        play_stage is the migration marker 'unresolved' — set the real "
+                  "value: record.py set %s play_stage <stage>" % (p["id"] or "?"))
         n_unres = sum(1 for r in data["roles"] if r["state"] == "unresolved")
         n_fulfilled = sum(1 for c in data["channels"] if c["state"] == "fulfilled")
         print("\n  %d role(s) unresolved · %d channel plan(s) fulfilled but not yet cleared"
               % (n_unres, n_fulfilled))
+        if data["play_unresolved"]:
+            print("  %d role(s) carry play_stage 'unresolved' — each needs a human-written "
+                  "value" % len(data["play_unresolved"]))
         for gid in data["contact_joinability_gaps"]:
             print("  ⚠️  channel %s has no joinable contact_id in contacts[] — its derived "
                   "touch can only ever come from log[]" % gid)
@@ -277,6 +322,16 @@ def main():
         for gid in data["contact_joinability_gaps"]:
             print("⚠️  channel %s: no joinable contact_id in contacts[] — the outbound-message "
                   "half of its derived touch can never fire" % gid, file=sys.stderr)
+        # ⚠️ Loud, but exit 0 — deliberately NOT blocked_until's exit-1 treatment. An
+        # unresolved blocked_until makes group membership UNDECIDABLE, so the run must stop.
+        # play_stage 'unresolved' is a valid, durable enum value validate_data.py accepts:
+        # migration day writes it onto every marked row at once, and a check that goes red for
+        # weeks over a backlog everyone knows about is a check people learn to ignore. The
+        # dashboard callout and the lines below are the consumer that keeps it visible.
+        for p in data["play_unresolved"]:
+            print("⚠️  %s: play_stage is the migration marker 'unresolved' — set the real "
+                  "value: record.py set %s play_stage <stage>"
+                  % ((p["title"] or p["id"] or "?")[:60], p["id"] or "?"), file=sys.stderr)
         return 1 if bad else 0
     return 0
 

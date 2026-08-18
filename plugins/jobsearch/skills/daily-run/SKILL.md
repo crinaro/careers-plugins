@@ -71,7 +71,7 @@ All state lives in this repo. Be token-frugal.
    lookback — back-to-back runs (`posture.py --cron` sets how many a day) would each re-scan the
    same ground. **A quiet run is the NORMAL outcome at this cadence.** Say so in one line and
    stop. **Do NOT pad it with make-work** — no re-researching settled roles, no speculative
-   outreach, no rewriting `focus.md` because the summary felt thin. The value of frequency is
+   outreach, no padding `data/asks.jsonl` because the summary felt thin. The value of frequency is
    catching a reply within one run interval, not multiplying the work. A late run (the app was
    closed) is a "catch-up run"; the window handles the gap.
 
@@ -84,8 +84,8 @@ All state lives in this repo. Be token-frugal.
 ```
 
 **⭐ THE READ PHASE RUNS UNLOCKED, ALWAYS, even while the candidate has a session open.** Running
-*alongside* him is the point. This step used to take the lock for the whole run, which serialised
-every run against his session: an idle coordinator held it from 07:02 and nothing could write for
+*alongside* them is the point. This step used to take the lock for the whole run, which serialised
+every run against their session: an idle coordinator held it from 07:02 and nothing could write for
 hours, costing that morning's run outright.
 
 - **UNLOCKED or LOCKED — PROCEED either way.** Note who holds it.
@@ -100,7 +100,7 @@ hours, costing that morning's run outright.
 ~/.claude/jobsearch/run push_init.sh                        # mint this session's push token (a no-op that says so under local-only — adr-012)
 ~/.claude/jobsearch/run check_stale_claims.py       # decayed claims
 ~/.claude/jobsearch/run check_followups.py          # silent threads
-~/.claude/jobsearch/run check_sections.py           # focus.md invariants
+~/.claude/jobsearch/run check_sections.py           # ask/commitment invariants (dev #93)
 ~/.claude/jobsearch/run check_action_claims.py      # a hand-authored ask the data already answered (#43)
 ~/.claude/jobsearch/run validate_data.py            # schema · enums · referential integrity
 ~/.claude/jobsearch/run channels_due.py             # which sources are due
@@ -165,7 +165,7 @@ state from the mailbox; it reads `data/*.jsonl` and writes changes **immediately
 | a **reply** | the outreach row's `outcome` + `responded_on`, AND the message into `data/messages.jsonl` (`direction: inbound`, with `source`) |
 | a **new person** | a `contacts[]` entry with `contact_id`, structured `email`/`linkedin`, and the outreach row's `contact_id` pointing at it |
 | a **meeting booked** | advance `stage`, add it to This Week |
-| **he reports sending** | the outreach row AND the draft body moved into `data/messages.jsonl` (`direction: outbound`) |
+| **the candidate reports sending** | the outreach row AND the draft body moved into `data/messages.jsonl` (`direction: outbound`) |
 
 **Never leave a change for the weekly audit to find.** A reply once sat unrecorded for 11 days
 while the knowledge was already in the repo, written in one place and not the other.
@@ -174,15 +174,15 @@ while the knowledge was already in the repo, written in one place and not the ot
 the candidate: "enhance the daily process to also look at additional items in an email thread,
 responses I may have already made").** An inbound reply is not automatically an open loop. Before
 you treat one as needing a response, **fetch the full thread and look for a message the candidate
-sent AFTER the inbound** — search his sent mail in that thread (`from:<his address>` on the same
+sent AFTER the inbound** — search the candidate's sent mail in that thread (`from:<candidate's address>` on the same
 subject, or `in:sent`/`in:anywhere`). Two outcomes:
-- **He already replied** → record BOTH directions into `data/messages.jsonl` (the inbound AND his
+- **They already replied** → record BOTH directions into `data/messages.jsonl` (the inbound AND their
   reply, each with its `source` uid), set the outreach row to reflect the latest state, and **do
   NOT queue a needs-response or spawn a drafter** — the loop is closed. Note "candidate already
-  replied" in the run summary so he knows it was seen, not missed.
+  replied" in the run summary so the candidate knows it was seen, not missed.
 - **The last word is theirs** → proceed to §7b (queue + draft).
 This happened 2026-08-05: Ashford Search's <an employer> decline landed overnight and the candidate replied ~1 hour
-later; the scan saw only the inbound and nearly drafted a response to a thread he had already closed.
+later; the scan saw only the inbound and nearly drafted a response to a thread the candidate had already closed.
 
 **c. HUMAN/MEETING PASS — delegate to `inbox-scan`.** New recruiter/human inbound, thread replies,
 and — swept FIRST per the hard rule — meeting artifacts. **It is NOT trusted for the digests**
@@ -217,7 +217,7 @@ detector for LinkedIn events.
 Job search since the last successful run (remote AND on-site/hybrid within the commute anchor —
 the JOB SEARCH capability covers both), contact-path lookup for any new appealing role.
 
-**If it reports BROWSER UNAVAILABLE or NOT SIGNED IN**, flag it at the top of the summary, tell the candidate to run **`/jobsearch:linkedin`** (a lapsed session is the commonest cause and he must sign in himself), **and QUEUE the work:**
+**If it reports BROWSER UNAVAILABLE or NOT SIGNED IN**, flag it at the top of the summary, tell the candidate to run **`/jobsearch:linkedin`** (a lapsed session is the commonest cause and they must sign in directly), **and QUEUE the work:**
 
 ```bash
 ~/.claude/jobsearch/run deferred.py --add "LinkedIn pass: reply check + inbox + job search" \
@@ -285,22 +285,31 @@ connection.** This is per-application, not weekly.
   this design removed.
 - **Still refused, or reported STALE** → a session died holding it. `--steal`, and say so.
 
-**⭐ USE THE WRITE API — do not hand-edit the JSONL.**
+**⭐ USE THE WRITE API — do not hand-edit the JSONL. A brand-new row is `create`, not an edit.**
+
+**⭐ `--already-locked` on every call in this phase.** This run took the run lock two commands
+ago, and record.py normally takes it again — waiting on your own hold never ends (public #17).
+The flag says "write under the run's hold"; record.py verifies a hold actually exists and
+neither takes nor releases anything.
 
 ```bash
-~/.claude/jobsearch/run record.py set <opp_id> stage screening
-~/.claude/jobsearch/run record.py set-in <opp_id> outreach contact_id=<cid> outcome replied
-~/.claude/jobsearch/run record.py append <opp_id> research_log '{"date":"...","note":"..."}'
+~/.claude/jobsearch/run record.py create <opp_id> '{"company_id":"...","title":"...","status":"backlog","stage":"sourced","verdict":"undecided","jd_url":null,"location":{...},"sightings":[...],"next_action_owner":"..."}' --already-locked
+~/.claude/jobsearch/run record.py set <opp_id> stage screening --already-locked
+~/.claude/jobsearch/run record.py set-in <opp_id> outreach contact_id=<cid> outcome replied --already-locked
+~/.claude/jobsearch/run record.py append <opp_id> research_log '{"date":"...","note":"..."}' --already-locked
 ```
 
-It takes the lock, re-reads inside it, writes **atomically** (`os.replace` — a partial write
-would destroy every record in the file), validates, and releases. **A full cycle is ~0.2s**, so
-the lock stops being something every session must remember to hold and becomes correct by
-construction. Ad-hoc `read-all / write-all` is what forced the lock to be coarse in the first
-place. **`--dry-run` describes the change without touching anything.**
+It re-reads inside the lock, writes **atomically** (`os.replace` — a partial write would
+destroy every record in the file), and validates. **A full cycle is ~0.2s.** Ad-hoc
+`read-all / write-all` is what forced the lock to be coarse in the first place. **`--dry-run`
+describes the change without touching anything.** (Outside a lock-holding run — an interactive
+one-off — drop the flag and record.py takes and releases the lock itself, in milliseconds.)
 
-Then: remaining edits to `network.md`; rewrite `focus.md` to current priorities;
-append a `log.md` entry. **All mutation belongs in this step and the four below — nothing after
+Then: remaining edits to `network.md`; record any new cross-cutting ask in `data/asks.jsonl`
+(kind: role|system — an ask leaves by setting `resolved_on`+`resolution`, never by rewriting
+its text) and any newly confirmed meeting in `data/commitments.jsonl` (date verified from the
+.ics, never recall); rewrite `handoff.md` — the letter to the next session; append a `log.md`
+entry. **All mutation belongs in this step and the four below — nothing after
 DASHBOARD may change tracked state.** Keep the window to COMMIT tight; it should be minutes.
 
 ## 7b. ⭐ WHEN A REPLY ARRIVES — RECORD IT, THEN DRAFT THE RESPONSE (added 2026-08-04, per the candidate)
@@ -311,7 +320,7 @@ session is a post-mortem, not a suggestion.**
 
 For every INBOUND reply this run discovers (Gmail or LinkedIn), after the incremental state write:
 0. **⭐ FIRST confirm the candidate hasn't already answered it** (the thread-completeness check in §3b):
-   pull the full thread and look for a message he sent AFTER the inbound. If he did, record both
+   pull the full thread and look for a message the candidate sent AFTER the inbound. If so, record both
    directions, note "already replied" in the summary, and **STOP — do not queue or draft.** Only if
    the last word is theirs do steps 1–3 apply.
 1. **Queue an URGENT `reply` finding** with the sender, the role, and a ONE-LINE proposed response
@@ -334,7 +343,8 @@ have been caught by this.** It reports artifacts TO GO READ; the authoritative t
 `gmail_get_attachment` + `parse_ics.py`, because a subject line can be weeks stale while the newest
 message schedules something tomorrow. **An artifact carrying an `.ics` with no readable date is an
 UNKNOWN, never a pass**, and two artifacts sharing an iCalendar UID are ONE meeting revised —
-highest `SEQUENCE` wins. Anything it surfaces goes into This Week before the dashboard.
+highest `SEQUENCE` wins. Anything it surfaces goes into `data/commitments.jsonl` (the store
+behind the This Week tab) before the dashboard.
 
 **⭐ BEFORE PROMISING A CALL-PREP NOTE, CHECK `call_preps/` — ONE MAY ALREADY EXIST.** For any
 upcoming call, `ls call_preps/` (files are named `call_prep_<date>.md`) before writing "prep note
@@ -368,7 +378,7 @@ that changes it. **It is the only field that can answer "what actually converts,
 infers it.** A move into `screening` creates `kb/<company_id>.md` in the same pass if it is
 missing — accumulation is the run's job, and `knowledge.py` names every gap.
 
-**When he reports sending something, WRITE THE OUTREACH ROW** with its `date` — a log entry once
+**When the candidate reports sending something, WRITE THE OUTREACH ROW** with its `date` — a log entry once
 claimed a row had been added and it never was, and `validate_data.py` cannot catch that because a
 MISSING row is schema-valid.
 
@@ -404,8 +414,8 @@ one line, but still do UPDATE STATE and DASHBOARD.
 
 **⭐ MONDAY DECISION BATCH.** On the first run on/after Monday, present a consolidated batch
 pairing the standing ATS-portal stage check with EVERY open Your Move role ask, each carrying an
-explicit lean (pursue/pass/apply) AND an act-by date. **The binding constraint is his decision
-throughput, not sourcing** — make the queue clearable in one 15-minute pass. **Role-ask lapse
+explicit lean (pursue/pass/apply) AND an act-by date. **The binding constraint is the candidate's
+decision throughput, not sourcing** — make the queue clearable in one 15-minute pass. **Role-ask lapse
 rule:** a *role-only* pursue/pass ask unanswered past its act-by date is closed as "lapsed" and
 removed from Your Move — reversible, and logged. **NEVER applies to letters, sends, or anything
 with an external deadline.**
@@ -414,13 +424,13 @@ with an external deadline.**
 
 ```bash
 ~/.claude/jobsearch/run inbox.py --post "<one line: what changed>" \
-    --detail "<what he must decide, act-by date first>" --urgency high
+    --detail "<what the candidate must decide, act-by date first>" --urgency high
 ```
 
 **Do this even on a quiet run** — "nothing new" is information, and its absence is
-indistinguishable from a run that never fired. **Writing state is not the same as telling him:**
+indistinguishable from a run that never fired. **Writing state is not the same as telling the candidate:**
 one run booked a call and sourced three roles while `notifyOnCompletion` was unclaimed and the run
-queued nothing, so none of it reached his view. `--urgency high` if anything needs him.
+queued nothing, so none of it reached their view. `--urgency high` if anything needs them.
 
 Then commit, genuinely last, and let the sync resolver decide the push half:
 
@@ -428,7 +438,7 @@ Then commit, genuinely last, and let the sync resolver decide the push half:
 # ⚠️ EXPLICIT PATHS, never `git add -A`. Subagents have written into this same tree during the
 # run, and `-A` bundles whatever they left mid-edit into this commit -- the exact failure the
 # rulebook records for 2026-07-25. Name what this run changed.
-git add data/ focus.md log.md drafts.md cover_letters.md dashboard.html 2>/dev/null
+git add data/ handoff.md log.md drafts.md cover_letters.md dashboard.html 2>/dev/null
 git commit -m "Daily run $(date +%F): <one-line summary>"
 ~/.claude/jobsearch/run sync.py --end-of-run
 ```

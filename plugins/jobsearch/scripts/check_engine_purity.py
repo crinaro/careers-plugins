@@ -174,7 +174,7 @@ KNOWN_EXCEPTIONS = ()
 # is what actually gets read.
 ENGINE = _tracked_engine_files()
 
-RECORD = {"docs/incident_archive.md", "log.md", "focus.md"}
+RECORD = {"docs/incident_archive.md", "log.md", "focus.md", "handoff.md"}
 
 
 def _profile_terms():

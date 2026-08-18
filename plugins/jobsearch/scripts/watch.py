@@ -14,10 +14,10 @@ The candidate, 2026-08-02:
      (say every 2 hours between 7am and 4pm)."
 
 **The conflict is about WRITES, not reads.** Two sessions reading the mailbox is harmless; two
-sessions rewriting `focus.md`, `log.md` and git is what clobbers. So the split is:
+sessions rewriting `data/*.jsonl`, `log.md` and git is what clobbers. So the split is:
 
     WATCHER (this script, every 2h)   read-only. Finds things. Appends to data/inbox.jsonl.
-                                      NEVER writes state, NEVER touches git, NEVER edits focus.md.
+                                      NEVER writes state, NEVER touches git, NEVER edits the stores.
     COORDINATOR (the interactive      the ONLY writer. Drains the queue, decides, updates the
     session, or a daily run)          JSON, commits.
 
@@ -32,7 +32,7 @@ By construction this script cannot conflict with anything: the only file it open
 WHAT IT WATCHES
 ---------------
   * new alert-digest roles not already in the pipeline
-  * meeting artifacts whose date is not in focus.md's This Week
+  * meeting artifacts whose date is in no data/commitments.jsonl row
   * inbound mail from a tracked contact after we last wrote to them (an unrecorded reply)
   * ATS receipts for applications still marked `submitted`
 
@@ -164,16 +164,23 @@ def main():
             "Job-alert digest: %s" % (m["subject"] or "")[:90],
             "from %s | %s" % (m["from"], m["date"]))
 
-    # ---- 2. meeting artifacts not in This Week ---------------------------------
-    focus = ""
-    fp = os.path.join(ROOT, "focus.md")
-    if os.path.exists(fp):
-        with open(fp, encoding="utf-8") as fh:
-            t = fh.read()
-        i = t.find("## 📅 This Week")
-        if i >= 0:
-            j = t.find("\n## ", i + 5)
-            focus = t[i:j if j > 0 else len(t)]
+    # ---- 2. meeting artifacts not in the commitments store ---------------------
+    # dev #93 — This Week is a view of data/commitments.jsonl now; a date is "seen" when any
+    # commitment row carries it. meeting_check.py does the full date+who reconciliation; this
+    # read-only sweep only needs the date set.
+    known_dates = set()
+    cp = os.path.join(ROOT, "data", "commitments.jsonl")
+    if os.path.exists(cp):
+        with open(cp, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        d = str(json.loads(line).get("date") or "")
+                    except ValueError:
+                        continue
+                    if re.match(r"^20\d\d-\d\d-\d\d$", d):
+                        known_dates.add(d)
     for m in rd.search('(subject:(Invitation OR "Updated invitation" OR "Appointment booked" OR '
                        '"Event accepted" OR interview) OR filename:ics) newer_than:%dd' % days,
                        limit=20):
@@ -188,11 +195,11 @@ def main():
         if "invitations@linkedin.com" in (m["from"] or "").lower():
             continue
         dates = set(re.findall(r"\b(20\d\d-\d\d-\d\d)\b", subj))
-        unseen = [d for d in dates if d not in focus]
+        unseen = [d for d in dates if d not in known_dates]
         add("meeting", "meet:%s:%s" % (m["account"], m["uid"]),
             "Meeting artifact: %s" % subj[:90],
             "from %s | %s%s" % (m["from"], m["date"],
-                                " | date(s) not in This Week: %s" % ", ".join(unseen) if unseen else ""),
+                                " | date(s) in no commitment row: %s" % ", ".join(unseen) if unseen else ""),
             urgency="high" if unseen else "normal")
 
     # ---- 3. inbound mail from a tracked contact we're awaiting ------------------

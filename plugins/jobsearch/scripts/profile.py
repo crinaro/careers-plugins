@@ -14,7 +14,7 @@ The pass had read `location.type == "onsite"` as "must relocate."
 
 `onsite` in the data does NOT mean "move." It means the seat is in an office. Whether
 that costs the candidate anything depends entirely on WHERE the office is, and there is a whole
-separate, LOWER local-onsite tier for offices inside his commute radius. Getting this backwards flips a passing role into a failing one.
+separate, LOWER local-onsite tier for offices inside their commute radius. Getting this backwards flips a passing role into a failing one.
 
     screen_comp() encodes that distinction so it cannot drift again.
 

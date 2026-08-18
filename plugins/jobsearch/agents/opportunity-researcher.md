@@ -62,7 +62,7 @@ guidance — apply the same discipline here that the outreach playbook applies l
    **A 404/failed direct fetch is a negative signal, not just an obstacle to route around
    (learned the hard way 2026-07-14 — <an employer> was called "confirmed live"
    after a direct fetch 404'd and a WebSearch cross-check found consistent snippets; the candidate
-   checked the actual posting himself and it was gone).** WebSearch snippets agreeing with
+   checked the actual posting directly and it was gone).** WebSearch snippets agreeing with
    each other only proves a page was indexed at some point — search engines keep serving
    cached content well after a posting is pulled. If the primary source 404s or won't
    render and you fall back to WebSearch to reconstruct the JD, that role is
@@ -189,4 +189,4 @@ material JD requirement:
 - **Do not create a new knowledge store.** Answers land in the three that exist: `projects.md`
   (a project + its scale, with a `Surface when:` line), `resume.md`'s "Additional Detail
   (elicited beyond the resume)" addenda, or `kb_<company>.md`. Record WHERE in `landed_in`.
-  Those files stay markdown by design (ADR-004) — the candidate edits them himself.
+  Those files stay markdown by design (ADR-004) — the candidate edits them directly.

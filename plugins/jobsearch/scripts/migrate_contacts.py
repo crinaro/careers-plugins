@@ -147,7 +147,7 @@ def main():
             by_key[key(nm)] = c
 
         # 2) join outreach -> contacts, creating the contact when the candidate messaged someone
-        #    who was never recorded. If he wrote to them, they ARE a contact.
+        #    who was never recorded. If the candidate wrote to them, they ARE a contact.
         for r in (o.get("outreach") or []):
             if r.get("contact_id"):
                 continue

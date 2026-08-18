@@ -23,10 +23,11 @@ If the launcher is missing, reinstall it with
 
 
 
-**Durable state:** `focus.md` § `🔗 Session Handoff`
+**Durable state:** `handoff.md` — the session-handoff letter (dev #93: focus.md is retired;
+asks live in `data/asks.jsonl`, commitments in `data/commitments.jsonl`)
 
 **This is the session the candidate interacts with.** Scheduled runs are unattended and cannot be messaged;
-this session is the only one he talks to, and the primary writer. Full design:
+this session is the only one the candidate talks to, and the primary writer. Full design:
 `docs/architecture.md` in the engine.
 
 **Run these in order. Do not improvise the sequence** — the point of this skill is that the
@@ -44,8 +45,8 @@ runs queued · lists **what is blocked on the candidate**, act-by date first · 
 
 **⭐ THIS SESSION DOES NOT HOLD THE LOCK ALL DAY — corrected 2026-08-03.** the candidate: *"Why can't it
 run concurrently with the coordinator session? That was the main purpose."* Holding it from
-startup blocked every background run for as long as he had a session open; on 08-03 his idle
-session held it 28 minutes and cost the 07:00 run.
+startup blocked every background run for as long as the candidate had a session open; on 08-03
+their idle session held it 28 minutes and cost the 07:00 run.
 
 **⭐⭐ WRAP EVERY WRITE IN `--run`. DO NOT take and release by hand** (the candidate, 2026-08-03:
 *"shouldn't this happen when you're done with a write?"*). The release is then structural: it
@@ -53,7 +54,7 @@ happens in a `finally`, even if the write fails.
 
 ```bash
 ~/.claude/jobsearch/run runlock.py --run "coordinator write" --wait 60 -- bash -c '
-  ...edit data/*.jsonl, focus.md, log.md; commit...
+  ...edit data/*.jsonl, handoff.md, log.md; commit...
 '
 ```
 
@@ -85,7 +86,7 @@ hook does not fire in every surface, and a migration that is merely *reported* i
 to act on — which is the team failing its own contract.
 
 **Never hand the candidate a script to run.** A change ships as a version; anything mechanical is
-yours to complete. Decisions and outward-facing approvals are his; mechanical work never is.
+yours to complete. Decisions and outward-facing approvals are theirs; mechanical work never is.
 
 If it reports a genuine failure — an unwritable archive, an unreadable file — that is an **engine
 issue**: route it to `engine-reporter`, do not work around it by hand.
@@ -133,32 +134,41 @@ two threads where neither has the whole picture.
 log at `~/.claude/jobsearch/diagnostics.log` — record what the machinery decided; that log carries
 no personal data, so it can be pasted into an issue as-is.
 
-## 2. Claim the notification subscription — ⚠️ ONLY THIS SESSION CAN · RE-CLAIM IT EVERY TURN
+## 2. Claim the notification subscription — ⚠️ ONLY THIS SESSION CAN · ONCE AT STARTUP
 
 ```
 update_scheduled_task(taskId="search-daily", notifyOnCompletion=True)
 ```
 
-**Issue this at startup AND re-issue the exact same call as the LAST action of EVERY coordinator
-turn.** It is idempotent and cheap — it just re-asserts this session as the subscriber — so running
-it every turn costs nothing and is the standing rule now, not a one-time startup step.
+**Claim it once, at startup. The old rule — re-issue this as the last action of EVERY turn — is
+WITHDRAWN (public #18, 2026-08-17), for three reasons that outweigh the window it shrank:**
 
-**Why once is not enough (2026-08-04 diagnosis).** The API exposes exactly ONE subscriber slot
-(`notifyOnCompletion` "replaces any prior subscriber"), and although its spec says it notifies on
-*every* completion, in practice the slot keeps getting cleared between runs: the coordinator claimed
-it at 06:42 on 2026-08-03 and was already unsubscribed by the 09:07 run, and across two days it had
-to be re-claimed five separate times. Re-claiming each turn shrinks the window where a run fires with
-the slot cleared. **It does NOT cover the idle gaps between your turns** — nothing model-driven can,
-because the claim is an MCP call only a live coordinator turn can make.
+1. **The re-claim is unverifiable.** This session cannot observe whether a notification was ever
+   delivered, so a per-turn re-claim can never be confirmed to have done anything — and under the
+   every-turn regime a background run was observed completing with NO notification arriving at
+   all; the run was discovered through the queue and git history, the channels that actually work.
+2. **The miss it guards against is already covered.** The durable queue is drained at the top of
+   every turn (step 3, and that rule stays absolute). A cleared slot costs the nudge, never the
+   finding.
+3. **The call is user-visible.** On a long session it spent the candidate's attention every single
+   turn, purchasing an unconfirmable benefit with the one resource this session exists to protect.
+
+**Re-claim ONLY on an observable signal:** the queue drain (step 3) or `check_runs.py` (step 1b)
+shows a background run COMPLETED since your last turn and no completion notification reached this
+session for it. That is direct evidence the slot was cleared or delivery failed — re-claim then,
+once, and note it in one line. (The slot genuinely does get cleared — five re-claims were needed
+across 2026-08-03/04, which is why the per-turn rule was tried — but an unconditional mandate kept
+paying the cost after the benefit had proven unmeasurable.)
 
 **A scheduled run is refused outright** ("...it ends when the run does"), and **a shell hook cannot
 do it either** — a hook runs a shell command, which cannot make this MCP call nor bind it to this
-session. So there is no way to automate it; the every-turn re-claim above is the best available push
-mitigation.
+session. Idle gaps between turns are uncoverable by anything model-driven, under any re-claim
+cadence.
 
 **⭐ The push is a bonus, never the guarantee. The QUEUE is the reliable channel** — a notification
-can be lost, the queue cannot. Drain it (step 3) every startup and whenever `coordinator.py` shows
-pending; treat any live nudge as a nice-to-have on top of it.
+can be lost, the queue cannot. Drain it (step 3) every turn; treat any live nudge as a
+nice-to-have on top of it. A rule that spends attention every turn to harden the bonus channel has
+the priorities inverted.
 
 ## 3. DRAIN the queue — ⭐ AT THE TOP OF EVERY TURN, NOT ONLY AT STARTUP
 
@@ -171,9 +181,10 @@ thing that makes an open session feel live.
 
 **Why (2026-08-06, the candidate):** *"Is it unrealistic to expect that I could have an ongoing
 coordinator session running and have the jobs post updates to it like a queue?"* A 07:08 background
-run had posted a summary carrying a high-urgency decision, and the session he had open all morning
-never showed it — because draining happened only at startup, and he had started that session the
-day before. **The item was durably queued the entire time and simply nobody looked.**
+run had posted a summary carrying a high-urgency decision, and the session the candidate had open
+all morning never showed it — because draining happened only at startup, and the candidate had
+started that session the day before. **The item was durably queued the entire time and simply
+nobody looked.**
 
 **The push channel cannot cover this and never will.** `notifyOnCompletion` has ONE subscriber
 slot, it keeps getting cleared, and **a scheduled run cannot deliver into a live session at all** —
@@ -201,8 +212,8 @@ August 3) was written in PROSE inside the question, where nothing could sort it.
 the sorting. **This step fixes the other half: surfacing a due item is not the same as proposing
 what to do about it.**
 
-**Never send it.** Draft into `drafts.md`, then republish the dashboard so he can read the full
-text there.
+**Never send it.** Draft into `drafts.md`, then republish the dashboard so the candidate can read
+the full text there.
 
 ## 4. DECIDE — tell the candidate where things stand
 
@@ -211,11 +222,11 @@ BEFORE YOU WRITE.** If it reports STALE, re-read before saying anything about wh
 On 2026-08-04 a session closed a long stretch of work by reporting that a reply still needed
 drafting; it had been sent and recorded eight hours earlier by a concurrent run, and the watermark
 had said STALE the whole time — it was never consulted, because the rule only mentioned writes.
-**A stale status report costs exactly what a stale write costs:** he acts on it.
+**A stale status report costs exactly what a stale write costs:** the candidate acts on it.
 
-Lead with **what needs him, act-by date first**. Then anything urgent the background runs found.
-Keep it short — he is starting a week, not reading a report. Do NOT re-summarise the pipeline he
-already knows.
+Lead with **what needs the candidate, act-by date first**. Then anything urgent the background runs found.
+Keep it short — they are starting a week, not reading a report. Do NOT re-summarise the pipeline they
+already know.
 
 ## 4b. ROUTE — dispatch to the roster, do not do their work
 
@@ -261,11 +272,11 @@ Then publish with the **Artifact** tool, passing `dashboard_artifact_url.txt` as
 **Why this is step 5 and not a footnote.** the candidate, 2026-08-03: *"Why did the coordinator not update
 the dashboard? It pushed items to drafts, but not the dashboard, why?"* Because
 `generate_dashboard.py` appeared in the `jobsearch:daily-run` skill and the `jobsearch:weekly-review` skill and
-**zero times in this file** — the one session he actually works in. CLAUDE.md's own rule is that
-**he reads the full text of drafts and letters off the DASHBOARD, not the transcript**, so the
-session producing that text was the session that never published it. That morning `drafts.md` was
-rewritten at 10:58, 11:02, 11:08, 11:13 and 11:14 while the dashboard sat at 10:51: five rounds of
-outreach he could not see.
+**zero times in this file** — the one session the candidate actually works in. CLAUDE.md's own rule
+is that **the candidate reads the full text of drafts and letters off the DASHBOARD, not the
+transcript**, so the session producing that text was the session that never published it. That
+morning `drafts.md` was rewritten at 10:58, 11:02, 11:08, 11:13 and 11:14 while the dashboard sat
+at 10:51: five rounds of outreach the candidate could not see.
 
 **Run it after ANY write — a draft, a decision, a status change — not only at the end of the day.**
 A session can go quiet without warning, and unpublished work is invisible work.
@@ -284,8 +295,8 @@ A session can go quiet without warning, and unpublished work is invisible work.
 - **Before any write, if the session has been idle a while:** `~/.claude/jobsearch/run changed.py`. A
   background run may have written underneath you. **Acting on a stale read is a correctness bug**
   — it is how a session confidently re-drafts an outreach note for a reply that already arrived.
-- **Never send anything.** Drafts go to `drafts.md` / `cover_letters.md` for the candidate's approval; they
-  sends every message himself. **Writing the draft is only half the job — REPUBLISH THE DASHBOARD,
-  or he never sees it.**
+- **Never send anything.** Drafts go to `drafts.md` / `cover_letters.md` for the candidate's approval; the
+  candidate sends every message directly. **Writing the draft is only half the job — REPUBLISH THE DASHBOARD,
+  or they never see it.**
 - **⚠️ Do not reschedule a task from inside a run of that task.** Changing a cron re-arms it and
   can fire it immediately — that is what spawned a duplicate weekly review on 2026-08-02.

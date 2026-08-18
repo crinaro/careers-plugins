@@ -8,13 +8,13 @@ The candidate, 2026-08-04: *"do we have the locks on the appropriate items? … 
 that are reused (atomic) that will make sense but the challenge is a process putting something on
 the queue for another."*
 
-He was right, and an audit made the reason precise. The repo already runs **two** concurrency
+The candidate was right, and an audit made the reason precise. The repo already runs **two** concurrency
 strategies and they were mixed up:
 
     APPEND + REPLAY   data/inbox.jsonl · data/pending_actions.jsonl · messages.jsonl
                       Lock-free BY DESIGN. Two workers append at once and replay resolves it.
-                      **These have never conflicted.** The queue hand-off he worried about is
-                      the part that already works.
+                      **These have never conflicted.** The queue hand-off the candidate worried
+                      about is the part that already works.
 
     WHOLE-FILE REWRITE  opportunities.jsonl (167 rows) · companies.jsonl · channels.jsonl
                       Every mutation was an AD-HOC `read all → mutate → write all`, invented
@@ -44,13 +44,36 @@ does not make concurrent edits to one row commutative. If that turns out to happ
 the answer is journaling the store the way the queues are journaled — but that is a data-model
 migration and should wait for evidence, not a guess.
 
+## ⭐ CALLING THIS MID-RUN: `--already-locked` (public #17 / dev #97)
+
+The daily run takes the run lock itself at the top of its write phase and releases after the
+commit. Called inside that window, this script used to try to take the same lock AGAIN — and
+since the holder was the caller's own run, it waited out the full timeout for a release that
+could never come. The observed result was the exact failure this API exists to prevent:
+sessions gave up and hand-edited the JSONL.
+
+So the contract is now explicit, and it does not touch the two-strategy design above:
+
+    OUTSIDE a lock-holding run   plain call — takes the lock, writes, releases (milliseconds).
+    INSIDE the run's write phase pass `--already-locked` — the write proceeds under the RUN's
+                                 hold; nothing here takes or releases. Verified, not trusted:
+                                 if nobody actually holds the lock the call is REFUSED, because
+                                 a caller claiming a hold that does not exist is writing
+                                 unprotected by accident.
+
+A refused take now also diagnoses the self-deadlock instead of leaving a silent wait: the
+default `--wait` is seconds (holders release in seconds by design), and the refusal says when
+`--already-locked` is the answer.
+
 Usage:
+    python3 scripts/record.py create <opp_id> '{"company_id":"...","title":"...", ...}'
     python3 scripts/record.py set <opp_id> stage screening
     python3 scripts/record.py set <opp_id> next_action_owner <candidate>   # e.g. your own name, lowercased
     python3 scripts/record.py set-in <opp_id> outreach contact_id=jane-doe outcome replied
     python3 scripts/record.py append <opp_id> research_log '{"date":"2026-08-04","note":"..."}'
     python3 scripts/record.py show <opp_id>
     ... --file companies|channels to address the other stores. --dry-run to preview.
+    ... --already-locked when the calling run already holds the run lock (see above).
 
 Python 3.9+. Standard library only.
 """
@@ -123,11 +146,24 @@ class LockError(RuntimeError):
     pass
 
 
-def take_lock(why, wait=120):
+# ⭐ Seconds, not minutes. Holders release in seconds by design (runlock.py's own contract), so
+# a wait longer than this only ever happens when the holder is the CALLER'S OWN RUN — which will
+# never release while it waits on us. 120 was sized for the old coarse lock and turned that
+# self-deadlock into a silent two-minute hang (public #17 / dev #97).
+DEFAULT_WAIT = 10
+
+
+def take_lock(why, wait=DEFAULT_WAIT):
     r = subprocess.run([sys.executable, LOCK, "--take", why, "--wait", str(wait)],
                        capture_output=True, text=True)
     if r.returncode != 0:
         raise LockError(r.stdout.strip() or "could not take the write lock")
+
+
+def lock_is_held():
+    """True if ANY writer currently holds the run lock. runlock --status exits 1 when locked."""
+    r = subprocess.run([sys.executable, LOCK, "--status"], capture_output=True, text=True)
+    return r.returncode != 0
 
 
 def release_lock():
@@ -230,12 +266,19 @@ def validate():
 
 def main():
     ap = argparse.ArgumentParser(description="Atomic writes to the record stores.")
-    ap.add_argument("op", choices=("set", "set-in", "append", "show", "fields"))
+    ap.add_argument("op", choices=("create", "set", "set-in", "append", "show", "fields"))
     ap.add_argument("rid", nargs="?", help="record id (e.g. an opportunity_id)")
     ap.add_argument("rest", nargs="*")
     ap.add_argument("--file", default="opportunities", choices=sorted(STORES))
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--wait", type=int, default=120)
+    ap.add_argument("--wait", type=int, default=DEFAULT_WAIT,
+                    help="Seconds to wait for the run lock (default %d — holders release in "
+                         "seconds; a longer wait usually means you are waiting on your own "
+                         "run, which never ends: see --already-locked)." % DEFAULT_WAIT)
+    ap.add_argument("--already-locked", action="store_true",
+                    help="The CALLING RUN already holds the run lock (it took it for its write "
+                         "phase). Write under that hold; take and release nothing. Verified: "
+                         "refused if nobody actually holds the lock.")
     ap.add_argument("--force", action="store_true",
                     help="Write an unknown field anyway. Almost never right — an unknown field "
                          "is invisible to every query written against the real one.")
@@ -258,7 +301,14 @@ def main():
 
     rows = load(args.file)
     rec = find(rows, args.rid)
-    if rec is None:
+    if args.op == "create":
+        # A create must land on an ABSENT id — the mirror image of every other op.
+        if rec is not None:
+            print("⛔ REFUSED — a %s record with id %r already exists." % (args.file, args.rid))
+            print("  create never overwrites. Use set/set-in/append to change an existing "
+                  "record; pick a new id for a new one.")
+            return 1
+    elif rec is None:
         print("No %s record with id %r." % (args.file, args.rid))
         return 1
 
@@ -268,7 +318,62 @@ def main():
         return 0
 
     # ---- build the mutation, describing it before touching anything -------------
-    if args.op == "set":
+    new_row = None
+    if args.op == "create":
+        # ⭐ THE MISSING OPERATION (public #17 / dev #97). Without it, adding a brand-new row
+        # meant hand-editing the JSONL — the exact ad-hoc read-all/write-all pattern this API
+        # exists to abolish, and it recurred across sessions for as long as the gap existed.
+        #
+        # Deliberately a NEW op rather than `set` auto-creating on an unknown id: an op that
+        # creates whenever an id fails to resolve turns every typo'd id into a silent new row,
+        # which is the duplicate problem wearing a different hat. Intent is stated, then checked.
+        if len(args.rest) != 1:
+            print("usage: create <id> '<json object for the full record>'")
+            return 2
+        try:
+            new_row = json.loads(args.rest[0])
+        except ValueError as e:
+            print("⛔ REFUSED — the record is not valid JSON: %s" % e)
+            return 1
+        if not isinstance(new_row, dict):
+            print("⛔ REFUSED — the record must be a JSON object, got %s."
+                  % type(new_row).__name__)
+            return 1
+        m = model()["stores"][args.file]
+        idf = m.get("id_field") or "id"
+        if idf in new_row and new_row[idf] != args.rid:
+            print("⛔ REFUSED — the JSON carries %s=%r but the command names %r. One id, "
+                  "stated once." % (idf, new_row[idf], args.rid))
+            return 1
+        new_row[idf] = args.rid
+        # Same refuse-before-write guards every other op gets: unknown keys, aliases, required.
+        for k in new_row:
+            bad = check_field(args.file, k)
+            if bad and not args.force:
+                print("⛔ REFUSED — %s" % bad)
+                return 1
+            spec = (m.get("arrays") or {}).get(k)
+            if spec and isinstance(new_row[k], list):
+                for i, item in enumerate(new_row[k]):
+                    if not isinstance(item, dict):
+                        continue
+                    for kk in item:
+                        bad = check_field(args.file, kk, array=k)
+                        if bad and not args.force:
+                            print("⛔ REFUSED — %s[%d]: %s" % (k, i, bad))
+                            return 1
+        missing = [f for f in (m.get("required") or []) if not new_row.get(f)]
+        if missing and not args.force:
+            print("⛔ REFUSED — %s requires %s" % (args.file, ", ".join(missing)))
+            print("  A record missing its required fields is one no query can rely on. "
+                  "(`fields` prints what this store accepts.)")
+            return 1
+        desc = "create record (%d field(s): %s)" % (len(new_row), ", ".join(sorted(new_row)))
+
+        def apply(r):        # unused for create; the lock section appends new_row instead
+            raise AssertionError("create does not mutate an existing record")
+
+    elif args.op == "set":
         if len(args.rest) != 2:
             print("usage: set <id> <field> <value>")
             return 2
@@ -358,23 +463,41 @@ def main():
         return 0
 
     # ---- the ONLY window the lock is held: read, mutate, write, verify ----------
-    try:
-        take_lock("record.py %s %s" % (args.op, args.rid), wait=args.wait)
-    except LockError as e:
-        print("  REFUSED — %s" % e)
-        print("  Another writer holds the lock. This is a SHORT hold; retry in a moment.")
-        return 1
+    if args.already_locked:
+        # ⭐ VERIFIED, NOT TRUSTED. A caller claiming a hold nobody has is writing unprotected
+        # by accident — refuse rather than proceed bare (public #17 / dev #97).
+        if not lock_is_held():
+            print("  REFUSED — --already-locked, but NOBODY holds the run lock.")
+            print("  Take it first (runlock.py --take), or drop the flag and let this call")
+            print("  take it for the milliseconds of the write.")
+            return 1
+    else:
+        try:
+            take_lock("record.py %s %s" % (args.op, args.rid), wait=args.wait)
+        except LockError as e:
+            print("  REFUSED — %s" % e)
+            print("  If that holder is YOUR OWN run (it took the lock for its write phase),")
+            print("  waiting can never succeed — re-run with --already-locked instead.")
+            print("  If it is another writer: holds are short; retry in a moment.")
+            return 1
     try:
         rows = load(args.file)          # re-read INSIDE the lock — the file may have moved
         rec = find(rows, args.rid)
-        if rec is None:
-            print("  record vanished between read and lock — aborting.")
-            return 1
-        try:
-            apply(rec)
-        except KeyError as e:
-            print("  %s" % e)
-            return 1
+        if args.op == "create":
+            if rec is not None:
+                print("  a record with id %r appeared between read and lock — aborting."
+                      % args.rid)
+                return 1
+            rows.append(new_row)
+        else:
+            if rec is None:
+                print("  record vanished between read and lock — aborting.")
+                return 1
+            try:
+                apply(rec)
+            except KeyError as e:
+                print("  %s" % e)
+                return 1
         # ⭐⭐ SNAPSHOT BEFORE THE WRITE — this is what makes the rollback below possible.
         # Raw bytes, not the parsed rows: restoring exactly what was there cannot reintroduce a
         # formatting difference, and a byte-identical restore is trivially verifiable.
@@ -419,9 +542,15 @@ def main():
                 print("  Restore %s from git before any further write." % STORES[args.file])
             return 1
     finally:
-        release_lock()
+        # Under --already-locked the hold belongs to the CALLING RUN — releasing it here would
+        # strip the protection off the rest of the run's write phase mid-flight.
+        if not args.already_locked:
+            release_lock()
 
-    print("  written atomically · validator clean · lock released")
+    if args.already_locked:
+        print("  written atomically · validator clean · run's lock left in place")
+    else:
+        print("  written atomically · validator clean · lock released")
     return 0
 
 

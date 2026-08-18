@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce focus.md's section rules: no resolved items in ask lists, no duplicates.
+"""Enforce the section invariants against the stores that feed the generated dashboard.
 
 WHY THIS EXISTS (2026-07-20)
 ----------------------------
@@ -7,31 +7,44 @@ The candidate: "it doesn't seem like we have clear rules when something is categ
 a specific area. why is something on 'Your Move' when it's already setup
 (meetings are an example)".
 
-He was right, and the cause was mechanical: resolved items were being REWRITTEN
-IN PLACE as "✅ CONFIRMED ..." status lines instead of being deleted. Your Move
-turned from a queue into a status board -- it held two already-scheduled meetings
-and two system items, none of which needed anything from him.
+The cause was mechanical: resolved items were being REWRITTEN IN PLACE as "✅ CONFIRMED ..."
+status lines instead of being deleted, and the same subject sat in two panels at once.
 
-Written rules decay. This checks them:
+⭐ WHAT CHANGED IN 0.25.0 (dev #93 / public #21)
+------------------------------------------------
+This used to parse `focus.md`, because that file was where the ask lists were hand-written.
+focus.md is retired as a source of state: the asks live in `data/asks.jsonl`, the scheduled
+commitments in `data/commitments.jsonl`, and the dashboard renders those stores directly. So
+the invariants are now enforced AGAINST THE STORES — the render is a pure function of them,
+so a clean store IS a clean surface, and checking prose nobody hand-writes any more would
+check nothing. What each historic rule became:
 
-  1. RESOLVED ITEM IN AN ASK LIST -- a Your Move / Process-Needs-the candidate entry that
-     reads as settled (leading checkmark, "CONFIRMED", "DONE", "sent", ...).
-     Ask lists must EXPEL resolved items, not annotate them.
-  2. DUPLICATE ACROSS SECTIONS -- the same subject in two panels. One item, one
-     section. A confirmed meeting belongs in This Week only.
-  3. STATUS-SHAPED YOUR MOVE LINE -- an entry that isn't phrased as a question or
-     an imperative aimed at the candidate.
-  4. WRONG-DOMAIN ASK -- a system/tooling item sitting in Your Move (belongs in
-     Process -> the Needs list) or vice versa.
+  1. RESOLVED ITEM IN AN ASK LIST — an OPEN ask (no `resolved_on`) whose text reads as
+     settled ("✅", "CONFIRMED", "done", ...). The store's own resolution mechanism is
+     `resolved_on` + `resolution`; prose-resolving a row keeps it rendering forever, which
+     is the exact staleness the cutover exists to end.
+  2. ONE ITEM, ONE SECTION — (a) two open asks about the same subject (the render puts each
+     row in exactly one group, so the only duplicate left is two ROWS); (b) an open ask that
+     duplicates a scheduled commitment — a commitment is not an ask, and This Week is its
+     only home; (c) an ask duplicating a role the JSONL already routes to Your Move by
+     `next_action_owner` — the derived row renders anyway, so the ask is a second copy.
+  3. ASK SHAPE — an open ask must read as a question or an imperative aimed at the owner.
+  4. WRONG-DOMAIN — kind=role text that is plainly a system/tooling decision, or
+     kind=system text that is plainly a role decision. `kind` picks the panel, so a wrong
+     kind is the modern form of "system item in Your Move".
+  5. UNRESOLVED COMMITMENT DATE — a commitment whose date is the migration marker
+     `unresolved` is surfaced here too; an unreadable date is an unknown, never a pass.
+  6. NUMERIC CROSS-REFERENCE ROT — now checked in `handoff.md` (the surviving hand-written
+     narrative): "Your Move #4" goes stale the instant a generated list reorders.
 
 Advisory only: always exits 0, so it can never wedge an unattended run.
 
     python3 scripts/check_sections.py
 
-Targets system Python 3.8 (/usr/bin/python3): no third-party packages, no
-zoneinfo, no walrus, no X | Y annotations.
+Python 3.9+. Standard library only.
 """
 
+import json
 import os
 import re
 import sys
@@ -40,6 +53,7 @@ import os, sys as _sys
 _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _root import profile_root as _profile_root
 import profile as _profile
+import your_move as _ym
 
 ROOT = _profile_root()
 
@@ -56,20 +70,8 @@ def _candidate_name_words():
     name = ident.get("full_name") or ident.get("display_name") or ""
     return {w.lower() for w in re.findall(r"[A-Za-z']+", name)}
 
-# ⭐ NAME-FREE BY CONSTRUCTION — corrected 2026-08-09.
-# These were "Process — ⚡ Needs the candidate". The owner's first name was thus part of the ENGINE's
-# matching logic, so this gate only enforced anything for one person: a profile whose heading
-# read "Needs the candidate" — which is what the plugin's own CLAUDE.md documents — matched
-# NOTHING, and every per-item check below was skipped silently. A gate that stops enforcing
-# without saying so is the failure this repo is organised against, and it was hiding inside the
-# section checker itself.
-#
-# The distinction the code actually needs is Your-Move vs Process, and "Needs" carries that on
-# its own. Whose name follows it is the profile's business.
-ASK_SECTIONS = ("⚡ Your Move", "⚡ Needs")
-PROCESS_MARKER = "Needs"
 
-# Phrases that mean "this is settled" -- an ask list should not contain them.
+# Phrases that mean "this is settled" -- an open ask should not contain them.
 RESOLVED_MARKERS = (
     "✅", "confirmed:", "— confirmed", "resolved:", "已", "done —", "completed",
     "sent 20", "already sent", "no longer needed", "withdrawn",
@@ -92,6 +94,8 @@ SYSTEM_WORDS = (
     # unambiguously system terms.
     "schema", "data model", "jsonl", "migration", "adr", "validator",  # NOT "architecture" — collides with Enterprise Architecture job titles
 )
+
+
 def _title_words():
     """Words from this profile's own target titles, lowercased. A previous version hardcoded
     one candidate's target seniority ("cto", "cio") as engine constants — role vocabulary for
@@ -110,16 +114,15 @@ def _title_words():
                 words.add(w)
     return words
 
+
 # ... but these are role/outreach words that outrank them.
 ROLE_WORDS = tuple(sorted(_title_words())) + (
     "recruiter", "outreach", "draft", "intro", "referral",
     "pursue", "pass", "role", "call with", "interview",
-    # Added 2026-07-21. Cover letters became a first-class artifact this day, and
-    # The candidate's search vocabulary is inherently technical -- an item asking what to put
-    # in a cover letter about a cloud architecture read as a "system decision"
-    # purely because it contained the word "migration". Same collision that got
-    # "architecture" removed from SYSTEM_WORDS on 2026-07-20. Role words outrank
-    # system words, so naming the artifact is enough to resolve it.
+    # Added 2026-07-21. The candidate's search vocabulary is inherently technical -- an item
+    # asking what to put in a cover letter about a cloud architecture read as a "system
+    # decision" purely because it contained the word "migration". Role words outrank system
+    # words, so naming the artifact is enough to resolve it.
     "cover letter", "resume", "application", "apply", "employer", "jd",
     "job description", "confidential",
 )
@@ -136,6 +139,23 @@ weekly daily review search process call meeting strategy update run runs session
 # signal, so leaving them in produces confident false positives.
 
 
+def load_jsonl(name):
+    path = os.path.join(ROOT, "data", name)
+    out = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        out.append(json.loads(line))
+                    except ValueError:
+                        pass                    # validate_data.py owns malformed-line errors
+    except OSError:
+        pass
+    return out
+
+
 def read(name):
     path = os.path.join(ROOT, name)
     if not os.path.exists(path):
@@ -147,171 +167,150 @@ def read(name):
         fh.close()
 
 
-def sections(md):
-    """Return list of (header, [(num, title, body), ...])."""
-    out = []
-    cur_h = None
-    cur_items = []
-    for line in md.splitlines():
-        hm = re.match(r"^##\s+(.+?)\s*$", line)
-        if hm:
-            if cur_h is not None:
-                out.append((cur_h, cur_items))
-            cur_h = hm.group(1)
-            cur_items = []
-            continue
-        im = re.match(r"^(\d+)\.\s+\*\*(.+?)\*\*\s*(.*)$", line)
-        if im and cur_h is not None:
-            cur_items.append((im.group(1), im.group(2), im.group(3)))
-    if cur_h is not None:
-        out.append((cur_h, cur_items))
-    return out
-
-
-def keywords(title):
-    t = re.sub(r"\[.*?\]\(.*?\)", " ", title.lower())
+def keywords(text):
+    t = re.sub(r"\[.*?\]\(.*?\)", " ", str(text).lower())
     t = re.sub(r"[^a-z0-9 ]+", " ", t)
     return set(w for w in t.split() if len(w) > 3 and w not in STOP)
 
 
 def main():
-    md = read("focus.md")
-    secs = sections(md)
+    asks = load_jsonl("asks.jsonl")
+    commitments = load_jsonl("commitments.jsonl")
+    opps = load_jsonl("opportunities.jsonl")
+    open_asks = _ym.open_asks(asks)          # membership is your_move.py's, never re-derived
     problems = []
 
-    # STRUCTURAL: a '## ' header glued onto the end of the previous line.
-    # This bit twice on 2026-07-20 while editing sections programmatically: a
-    # regex ending at a (?=^## ) lookahead drops the newline, and the next
-    # header silently becomes part of the last list item. The whole following
-    # section then parses as part of the previous one -- Your Move appeared to
-    # have 19 items when it had 7. Cheap to detect, invisible if you don't.
-    for i, line in enumerate(md.splitlines(), 1):
-        # Strip inline code spans first. Prose legitimately quotes header names
-        # (e.g. describing focus.md's `## Active Pursuit` section), and counting
-        # those as glued headers is a false positive that punishes precise
-        # writing. Added 2026-07-21, when exactly that tripped it.
-        bare = re.sub(r"`[^`]*`", "", line)
-        if "## " in bare and not bare.lstrip().startswith("#"):
+    def _hit(words, low):
+        # Word-boundary matching, NOT substring. Fixed 2026-07-20 after "script" matched
+        # **Sure**script**s** and flagged a resume-content item as a tooling decision.
+        return any(re.search(r"\b" + re.escape(w) + r"s?\b", low) for w in words)
+
+    # ---- 1, 3, 4: per-ask checks -----------------------------------------
+    for a in open_asks:
+        aid = a.get("id", "?")
+        title = str(a.get("title") or "")
+        low = ("%s %s" % (title, a.get("ask") or "")).lower()
+
+        if any(mk in title.lower() for mk in RESOLVED_MARKERS):
             problems.append((
-                "HEADER GLUED TO PREVIOUS LINE", "focus.md", str(i),
-                line.strip()[:90],
-                "A '## ' header is not at the start of its line, so every section "
-                "below it parses into the one above. Insert a blank line before it."))
+                "RESOLVED ITEM IN AN ASK LIST", "asks[%s]" % aid, title,
+                "Reads as settled but has no resolved_on. Ask rows are expelled by setting "
+                "resolved_on + resolution — never by rewriting the text into a status line."))
+            continue
 
-    # NUMERIC CROSS-REFERENCE ROT: prose that points at an item by its number
-    # ("Your Move #4", "Needs <owner> #1") goes stale the instant the list renumbers
-    # -- which happens constantly. Reference items by SUBJECT, not number. Added
-    # 2026-07-29 after stale "#N" refs piled up in the Session Handoff (and role
-    # decisions moved to a generated JSONL view, so their numbers aren't even
-    # authored anymore). Skip the header's own rules-prose lines.
-    XREF_RE = re.compile(r"(Your Move|Needs \w+|This Week|Active Pursuit|Process\s*→\s*Open)\s*#\d")
-    for i, line in enumerate(md.splitlines(), 1):
-        if XREF_RE.search(re.sub(r"`[^`]*`", "", line)):
+        if not any(sh in low for sh in ASK_SHAPES):
             problems.append((
-                "NUMERIC CROSS-REFERENCE (rots on renumber)", "focus.md", str(i),
-                line.strip()[:90],
-                "Points at an item by number; numbers shift every time the list changes. "
-                "Refer to it by subject instead (e.g. 'the <a contact> intro', not 'Your Move #4')."))
+                "NOT PHRASED AS AN ASK", "asks[%s]" % aid, title,
+                "Doesn't read as a question or an imperative aimed at the owner. "
+                "If it's a status report, it belongs on the record, not in asks.jsonl."))
 
-    # ---- 1 & 3 & 4: per-item checks inside ask sections -------------------
-    for header, items in secs:
-        if not any(a in header for a in ASK_SECTIONS):
-            continue
-        is_process = PROCESS_MARKER in header
-        for num, title, body in items:
-            low = (title + " " + body).lower()
-            tlow = title.lower()
+        sysh = _hit(SYSTEM_WORDS, low)
+        roleh = _hit(ROLE_WORDS, low)
+        if a.get("kind") == "role" and sysh and not roleh:
+            problems.append((
+                "SYSTEM ITEM FILED AS kind=role", "asks[%s]" % aid, title,
+                "Looks like a system/tooling decision — set kind: system so it renders in "
+                "the System & tooling group, not the role queue."))
+        if a.get("kind") == "system" and roleh and not sysh:
+            problems.append((
+                "ROLE ITEM FILED AS kind=system", "asks[%s]" % aid, title,
+                "Looks like a role/outreach decision — set kind: role."))
 
-            if any(mk in tlow for mk in RESOLVED_MARKERS):
-                problems.append((
-                    "RESOLVED ITEM IN AN ASK LIST", header, num, title,
-                    "Reads as settled. Ask lists expel resolved items -- delete it, "
-                    "log the outcome, and if it became a commitment put it in This Week."))
-                continue
-
-            if not any(sh in low for sh in ASK_SHAPES):
-                problems.append((
-                    "NOT PHRASED AS AN ASK", header, num, title,
-                    "Doesn't read as a question or an imperative aimed at the owner. "
-                    "If it's a status report, it belongs in a state section."))
-
-            # Word-boundary matching, NOT substring. Fixed 2026-07-20 after
-            # "script" matched **Sure**script**s** and flagged a resume-content
-            # item as a tooling decision. Substring matching on short domain
-            # words produces confident nonsense: "script" also hits
-            # "transcript"/"description", "repo" hits "report"/"reporting".
-            def _hit(words):
-                return any(re.search(r"\b" + re.escape(w) + r"s?\b", low) for w in words)
-            sysh = _hit(SYSTEM_WORDS)
-            roleh = _hit(ROLE_WORDS)
-            if not is_process and sysh and not roleh:
-                problems.append((
-                    "SYSTEM ITEM IN YOUR MOVE", header, num, title,
-                    "Looks like a system/tooling decision -- move to the Process ask list."))
-            if is_process and roleh and not sysh:
-                problems.append((
-                    "ROLE ITEM IN PROCESS", header, num, title,
-                    "Looks like a role/outreach decision -- move to Your Move."))
-
-    # ---- 2: duplicates across sections -----------------------------------
-    # IMPORTANT NUANCE (refined 2026-07-20 after the first version over-flagged):
-    # an ask in Your Move that POINTS AT a role tracked in Active Pursuit / Needs
-    # Resolution is NOT a duplicate -- Your Move is an INDEX of what needs the candidate,
-    # and the role's detail rightly lives in its own section. That pairing is
-    # intended and must not be "fixed" by deleting one side.
-    #
-    # What IS a genuine duplicate, and what the candidate actually hit:
-    #   - the same ask sitting in BOTH ask lists (Your Move + the Process Needs list)
-    #   - a scheduled commitment appearing in an ask list (This Week is its only home)
-    # So compare ask-vs-ask, and This-Week-vs-ask. Nothing else.
-    def _kind(h):
-        if any(a in h for a in ASK_SECTIONS):
-            return "ask"
-        if "This Week" in h:
-            return "week"
-        return "state"
-
-    seen = []
-    for header, items in secs:
-        if "Passed" in header or "archive" in header.lower():
-            continue
-        if _kind(header) == "state":
-            continue
-        for num, title, _ in items:
-            seen.append((header, num, title, keywords(title)))
-    for i in range(len(seen)):
-        for j in range(i + 1, len(seen)):
-            hi, ni, ti, ki = seen[i]
-            hj, nj, tj, kj = seen[j]
-            if hi == hj or not ki or not kj:
-                continue
-            ka, kb = _kind(hi), _kind(hj)
-            # ask-vs-ask, or week-vs-ask. Never state-vs-anything.
-            if not ((ka == "ask" and kb == "ask") or set([ka, kb]) == set(["week", "ask"])):
+    # ---- 2: one item, one section ----------------------------------------
+    # The render puts each ROW in exactly one panel, so the duplicates left are duplicates
+    # in the DATA: two open asks about one subject, an ask restating a commitment, or an ask
+    # restating a role the JSONL already routes to Your Move.
+    # TITLE keywords, deliberately — matching the focus.md-era comparison. Folding the full
+    # ask text in dilutes the overlap ratio until real duplicates stop flagging.
+    ask_keys = [(a, keywords(a.get("title") or "")) for a in open_asks]
+    for i in range(len(ask_keys)):
+        for j in range(i + 1, len(ask_keys)):
+            (ai, ki), (aj, kj) = ask_keys[i], ask_keys[j]
+            if not ki or not kj:
                 continue
             overlap = ki & kj
             if len(overlap) >= 2 and len(overlap) >= min(len(ki), len(kj)) * 0.6:
                 problems.append((
-                    "DUPLICATE ACROSS SECTIONS", "%s  vs  %s" % (hi, hj),
-                    "%s/%s" % (ni, nj), "%s  ||  %s" % (ti[:48], tj[:48]),
-                    "One item, one section. Shared: " + ", ".join(sorted(overlap))))
+                    "DUPLICATE ASKS", "asks[%s] vs asks[%s]" % (ai.get("id", "?"),
+                                                                aj.get("id", "?")),
+                    "%s  ||  %s" % (str(ai.get("title") or "")[:44],
+                                    str(aj.get("title") or "")[:44]),
+                    "One item, one row. Shared: " + ", ".join(sorted(overlap))))
 
-    print("Section-rule check - focus.md")
+    cm_keys = [(c, keywords("%s %s" % (c.get("title") or "", c.get("who") or "")))
+               for c in commitments]
+    for a, ka in ask_keys:
+        for c, kc in cm_keys:
+            if not ka or not kc:
+                continue
+            overlap = ka & kc
+            if len(overlap) >= 2 and len(overlap) >= min(len(ka), len(kc)) * 0.6:
+                problems.append((
+                    "SCHEDULED COMMITMENT IN AN ASK LIST",
+                    "asks[%s] vs commitments[%s]" % (a.get("id", "?"), c.get("id", "?")),
+                    str(a.get("title") or "")[:60],
+                    "A confirmed commitment's only home is This Week (commitments.jsonl). "
+                    "If nothing more is needed from the owner, resolve the ask."))
+
+    # An ask duplicating a role decision the store already derives. IMPORTANT NUANCE carried
+    # over from the focus.md era: an ask that merely POINTS AT a tracked role is legitimate —
+    # what is flagged is an ask on a role whose record ALREADY routes it to Your Move
+    # (next_action_owner = the owner), because the derived row renders regardless and the ask
+    # is then a second copy that can only ever disagree.
+    try:
+        owner = _profile.owner_token()
+    except Exception:
+        owner = None
+    derived = [(o, keywords("%s %s" % (o.get("title") or "", o.get("next_action") or "")))
+               for o in opps
+               if owner and o.get("next_action_owner") == owner
+               and o.get("status") in _ym.LIVE_OPP_STATUSES]
+    for a, ka in ask_keys:
+        for o, ko in derived:
+            if a.get("opp_id") and a["opp_id"] == o.get("id"):
+                problems.append((
+                    "ASK DUPLICATES A DERIVED ROLE ROW",
+                    "asks[%s] vs opportunities[%s]" % (a.get("id", "?"), o.get("id", "?")),
+                    str(a.get("title") or "")[:60],
+                    "This role's record already routes it to Your Move via "
+                    "next_action_owner; the derived row renders by itself. Put the ask text "
+                    "in the record's next_action and resolve this row."))
+
+    # ---- 5: a commitment whose date is the migration marker ---------------
+    for c in commitments:
+        if str(c.get("date")) == "unresolved":
+            problems.append((
+                "COMMITMENT DATE UNRESOLVED", "commitments[%s]" % c.get("id", "?"),
+                str(c.get("title") or "")[:60],
+                "The date is the migration marker `unresolved`. Verify the real time from "
+                "the invite's .ics (never recall) and set it."))
+
+    # ---- 6: numeric cross-reference rot in the surviving narrative ---------
+    XREF_RE = re.compile(r"(Your Move|Needs \w+|This Week|Active Pursuit)\s*#\d")
+    for i, line in enumerate(read("handoff.md").splitlines(), 1):
+        if XREF_RE.search(re.sub(r"`[^`]*`", "", line)):
+            problems.append((
+                "NUMERIC CROSS-REFERENCE (rots on renumber)", "handoff.md:%d" % i,
+                line.strip()[:90],
+                "Points at a generated list item by number; numbers shift on every "
+                "regeneration. Refer to it by subject instead."))
+
+    print("Section-rule check — data/asks.jsonl · data/commitments.jsonl · handoff.md")
     if not problems:
-        print("\n  Clean. Every ask reads as an ask, nothing resolved is lingering,")
-        print("  and no item appears in two sections.")
+        print("\n  Clean. Every open ask reads as an ask, nothing resolved is lingering,")
+        print("  and no item appears in two places.")
         return 0
 
     print("\n" + "=" * 72)
     print("%d PROBLEM(S)" % len(problems))
     print("=" * 72)
     kind_last = None
-    for kind, header, num, title, why in problems:
+    for kind, where, title, why in problems:
         if kind != kind_last:
             print("\n-- %s --" % kind)
             kind_last = kind
-        print("  [%s] item %s" % (header, num))
-        print("      %s" % title[:96])
+        print("  [%s]" % where)
+        print("      %s" % str(title)[:96])
         print("      -> %s" % why)
     return 0
 

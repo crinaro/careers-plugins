@@ -21,7 +21,7 @@ This repo is the single source of truth for the candidate's executive job search
 - **`user.json`** (who the candidate is) · **`config.json`** (how the search behaves). Never retype a
   value from prose — read it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/profile.py"`.
 
-**HUMAN-EDITED NARRATIVE (markdown by design — the candidate edits these himself).**
+**HUMAN-EDITED NARRATIVE (markdown by design — the candidate edits these directly).**
 - **`resume.md`** — verbatim canonical resume; **the source of truth for any background claim,
   including its one-line role descriptions.** ⭐ **Copy its own sentences; do not paraphrase from
   memory** — a paraphrase of one employer once dropped the clause naming its marquee customers,
@@ -36,9 +36,11 @@ This repo is the single source of truth for the candidate's executive job search
 - **`network.md`** — warm-intro targets and alumni.
 
 **STATE AND OUTPUT.**
-- **`focus.md`** — a decision tool, not a log. **Role state is GENERATED from the JSONL — to
-  change what shows there, edit the role's `status`/`next_action`, not this file.** Section rules are
-  in its header; `scripts/check_sections.py` enforces them.
+- **`data/asks.jsonl`** (cross-cutting asks, kind `role`|`system`) · **`data/commitments.jsonl`**
+  (commitments — This Week). **⭐ focus.md IS RETIRED (dev #93): never read or write it.
+  Role state is GENERATED from the JSONL — edit the record.** An ask leaves every view via
+  `resolved_on`+`resolution`; `check_sections.py` enforces the invariants.
+- **`handoff.md`** — the session-handoff letter.
 - **`log.md`** — append-only. Never edit past entries.
 - **`drafts.md`** (pending outreach) · **`cover_letters.md`** (pending letters). **⭐ BODIES MUST
   BE `> `-BLOCKQUOTED OR THEY PUBLISH EMPTY** — that shipped once, and only the candidate noticed. Entry
@@ -61,8 +63,8 @@ This repo is the single source of truth for the candidate's executive job search
 ## ⭐ WHERE DOES AN ITEM GO? Answer two questions, in order.
 
 **(1) Does the candidate have to decide, approve, or do something?**
-- **No** → it is STATE: This Week (a scheduled commitment) · role/thread state (the JSONL) ·
-  Network. **⭐ If it is the ENGINE's fault — a script, a gate, a skill, an agent — it is NOT
+- **No** → it is STATE: a commitment (`data/commitments.jsonl`) · role/thread state (the
+  JSONL) · Network. **⭐ If it is the ENGINE's fault — a script, a gate, a skill, an agent — it is NOT
   state and NOT a local to-do: it is an ISSUE on the plugin's repository.** Propose it with the
   `engine-reporter` agent, file it with `report_issue.py` after the candidate agrees.
   *(`Process → 🔧 Open` and its dashboard tab were retired 2026-08-06. A capability's defects
@@ -76,7 +78,7 @@ This repo is the single source of truth for the candidate's executive job search
   renders inside **Your Move** as the *System & tooling* group. ⚠️ **This is the one process
   category that survives**, and it must not be filed as an engine issue: a credential, a cadence
   or an account setting is a decision only the candidate can make, and no issue on the engine repo
-  can resolve it for him.
+  can resolve it for them.
 
 **Three invariants:** **ONE ITEM, ONE SECTION** (appearing in two panels is a bug) · **ASK LISTS
 EXPEL RESOLVED ITEMS** the moment they're answered — never rewrite one into a "✅ CONFIRMED"
@@ -142,7 +144,7 @@ before they were centralized — a value stated twice is a value that disagrees 
 still `false`. Ask before any comp conversation leans on that tier.
 
 ## Hard rules
-- **SCAN FOR MEETING ARTIFACTS AND HUMAN SENDERS *FIRST*, BEFORE ANY NAMED PRIORITY LIST.** Added 2026-07-21 after the 2PM Gmail scan missed a **confirmed interview booked for the next morning** (<an employer>, Wed 7/22 9:00am) that had arrived *inside* its window, and reported "no new recruiter/human contact." **Two causes worth generalising: (1) a numbered priority list in a scan brief reads as permission to ignore everything not on it** — so the sweep for `subject:(Invitation OR "Appointment booked" OR "Updated invitation")` and for any non-automated human sender must come FIRST and unconditionally; **(2) a thread's SUBJECT LINE can be weeks stale while its newest message schedules something tomorrow** — this one read "Re: Appointment booked: ... @ Wed Jul 15" and contained the 7/22 booking. **Never judge a thread's freshness by its subject.** Corollary: `focus.md`'s This Week is only as good as the scan feeding it — a stale This Week is the *symptom*; a scan that skipped an artifact type is the *cause*.
+- **SCAN FOR MEETING ARTIFACTS AND HUMAN SENDERS *FIRST*, BEFORE ANY NAMED PRIORITY LIST.** Added 2026-07-21 after the 2PM Gmail scan missed a **confirmed interview booked for the next morning** (<an employer>, Wed 7/22 9:00am) that had arrived *inside* its window, and reported "no new recruiter/human contact." **Two causes worth generalising: (1) a numbered priority list in a scan brief reads as permission to ignore everything not on it** — so the sweep for `subject:(Invitation OR "Appointment booked" OR "Updated invitation")` and for any non-automated human sender must come FIRST and unconditionally; **(2) a thread's SUBJECT LINE can be weeks stale while its newest message schedules something tomorrow** — this one read "Re: Appointment booked: ... @ Wed Jul 15" and contained the 7/22 booking. **Never judge a thread's freshness by its subject.** Corollary: the commitments store is only as good as the scan feeding it — a stale This Week tab is the *symptom*; a scan that skipped an artifact type is the *cause*.
 - NEVER fabricate mutual-connection or referral claims.
 - **AN APPLICATION'S DATE COMES FROM THE CONFIRMATION EMAIL. Search the mailbox before inferring
   it from anything else** — never from a tracker line, a "last modified" timestamp, or LinkedIn's
@@ -230,12 +232,12 @@ still `false`. Ask before any comp conversation leans on that tier.
   search-portal shell; and <an employer>'s returned **"the job you are trying to apply for has been filled"** for a req that
   was live with a working Apply button and a stated 07/31 close date. **In every case the browser render showed the
   truth.** So: a fetch may confirm a posting is LIVE, but it can never establish that one is DEAD — and telling the candidate
-  a role is gone when it isn't costs him a real opportunity. **A genuine negative needs two agreeing signals** (e.g.
+  a role is gone when it isn't costs them a real opportunity. **A genuine negative needs two agreeing signals** (e.g.
   <an employer>'s closed "Lead Director – Cloud Solution Architecture" returned both HTTP 410 and a browser render saying
   unavailable — that is a confirmed close).
 - **⭐ CANONICAL COVER-LETTER HEADER — the template is DATA, in `config.writing.cover_letter_header`.**
   Render it with `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/profile.py"`; never retype a name, city, phone or address into a
-  letter. The candidate corrected this header himself (2026-07-22), and it deliberately uses a
+  letter. The candidate corrected this header directly (2026-07-22), and it deliberately uses a
   **precise city** where `resume.md`'s header uses a broader metro phrasing. **That difference is
   their own choice and is NOT to be "corrected" in either direction unasked** — a letter to a
   specific city benefits from precision; the resume is a different artifact making a different
@@ -277,7 +279,7 @@ still `false`. Ask before any comp conversation leans on that tier.
   materially change how compelling the pitch is.
 - **NEVER edit the candidate's live LinkedIn profile without their explicit fresh approval** — a public,
   identity-facing profile is at least as consequential as a sent message. Draft suggested copy via
-  `profile-optimizer` for his review first.
+  `profile-optimizer` for their review first.
 - Outreach style: warm, role-specific, healthcare/SaaS background, **no comp mentioned upfront**.
   Per-medium limits and the two-jobs rule live in `config.json.communications` — read them with
   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/profile.py"`, never retype one.
@@ -361,7 +363,7 @@ broken one reads downstream as "no matching proof points" — same as having non
 
 **Deterministic sweeps** (a daily, predictable artifact is a query, not a model summary):
 - `alert_sweep.py` — board/aggregator digests, every configured mailbox.
-- `meeting_check.py` — calendar artifacts diffed against `focus.md`'s This Week.
+- `meeting_check.py` — calendar artifacts diffed against `data/commitments.jsonl`.
 - `gmail_mcp_server.py` — multi-account Gmail over IMAP. **⭐ `account` defaults to `all`; an
   unreachable account raises a loud `!! INCOMPLETE COVERAGE` banner. Never pass a single
   `account` unless you specifically mean to narrow it.** Credentials live only in the OS
@@ -426,10 +428,10 @@ Every scheduled run is a **new session with zero memory of the last**, and a run
 outlives its summary — the candidate replies hours later, and that reply exists only in that transcript.
 **The repo is the only thing that crosses the boundary.**
 
-**START:** read `focus.md`'s `## 🔗 Session Handoff` (the last run wrote it for you), then
+**START:** read `handoff.md`, then
 `list_sessions` — if any session here has `lastActivityAt` newer than the latest `log.md` entry,
 read its tail with `list_events` and fold the candidate's instructions in before new work. **END:** rewrite
-the Handoff block — a letter to a colleague who wasn't there. **A daily run can take 2+ hours**
+`handoff.md` — a letter to a colleague who wasn't there. **A daily run can take 2+ hours**
 (2026-07-19: 07:08 → 09:23); space schedules against that.
 
 ## Run hygiene

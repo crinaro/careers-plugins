@@ -5,7 +5,7 @@ The COORDINATOR's view of the watcher queue — what the background sweeps found
 WHY THIS EXISTS
 ---------------
 The candidate, 2026-08-02, wanted the daily check to run every ~2 hours without colliding with the
-session he is actually working in. The split that makes that safe:
+session the candidate is actually working in. The split that makes that safe:
 
     WATCHER (scripts/watch.py, every 2h)   read-only; appends findings here. Never writes state.
     COORDINATOR (the interactive session)  the ONLY writer. Drains this queue and acts.
@@ -56,7 +56,7 @@ ACTION = {
             "what the candidate should do next."),
     "run-summary": ("READ THIS FIRST — it is what a background run did while you were away. The "
                     "state is ALREADY written; this is the notification, not the work. Ack it "
-                    "once you have told the candidate anything he needs to act on."),
+                    "once you have told the candidate anything they need to act on."),
 }
 
 # ⭐⭐ WHY `run-summary` EXISTS — added 2026-08-03, and it closes a hole I opened that morning.
@@ -76,7 +76,7 @@ ACTION = {
 #
 # Nothing was lost; it was invisible, which for a role that needs a decision is nearly as bad.
 # The 09:07 run booked a Larkbridge Technology call for Wed 08/05 9:00 AM and sourced three roles, and none of
-# it surfaced in his view.
+# it surfaced in their view.
 #
 # So a FULL run now posts a summary here as its last act. **This is a notification, never a
 # substitute for state** — the writes still happen in the run.

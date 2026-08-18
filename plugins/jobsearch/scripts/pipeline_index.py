@@ -132,26 +132,29 @@ def main():
     else:
         header = "ACTIVE PIPELINE — excluded records hidden (use --all or --excluded)"
     print("%s — %d of %d record(s)" % (header, len(rows), len(opps)))
-    print("=" * 104)
-    print("  %-42s | %-20s | %-15s | %-11s | %-5s | %s"
-          % ("title", "company", "status", "stage", "A=app T=touch", "verdict"))
-    print("-" * 104)
+    print("=" * 130)
+    # `play` added with dev #95's follow-on: a session asking "is this tracked?" could not
+    # see the post-application play position, so the field existed and no reader met it.
+    print("  %-42s | %-20s | %-15s | %-11s | %-23s | %-5s | %s"
+          % ("title", "company", "status", "stage", "play", "A=app T=touch", "verdict"))
+    print("-" * 130)
 
     for o in sorted(rows, key=lambda x: ((x.get("company_id") or ""), x.get("id"))):
         # ⭐ ACTIVITY COLUMN — added 2026-08-03. `stage` is a MODEL of where a role is; this is
         # the RECEIPT of what was actually sent. On 2026-08-03 I read `research_log: 0` on three
         # records and reported them to the candidate as "never researched, sitting unexamined" — while
         # each had an application filed 07/31 WITH a cover letter and four outreach touches the
-        # same day. He corrected me. An empty research_log is not an unworked role, and `stage:
+        # same day. The candidate corrected me. An empty research_log is not an unworked role, and `stage:
         # contacted` did not disambiguate it. **Never infer that nothing was done from ONE array.**
         napp = len(o.get("applications") or [])
         nout = len([r for r in (o.get("outreach") or []) if r.get("status") == "sent"])
         act = ("A%d" % napp if napp else "  ") + " " + ("T%d" % nout if nout else "  ")
-        line = "%-42s | %-20s | %-15s | %-11s | %-5s | %s" % (
+        line = "%-42s | %-20s | %-15s | %-11s | %-23s | %-5s | %s" % (
             (o.get("title") or "?")[:42],
             (companies.get(o.get("company_id"), o.get("company_id") or "?"))[:20],
             (o.get("status") or "?")[:15],
             (o.get("stage") or "?")[:11],
+            (o.get("play_stage") or "—")[:23],
             act,
             (o.get("verdict") or "?"),
         )
@@ -172,6 +175,14 @@ def main():
         if n_exp:
             print("  (%d expired record(s) hidden — terminal but NEVER declined; a re-sighting "
                   "is a repost and should surface)" % n_exp)
+    # The migration marker must stay visible from every view of this index — an `unresolved`
+    # play position nobody surfaces looks handled and is not (dev #95 follow-on).
+    n_play_unres = sum(1 for o in opps if o.get("play_stage") == "unresolved"
+                       and o.get("status") not in ("passed", "expired"))
+    if n_play_unres:
+        print("  ⚠️ %d role(s) carry play_stage 'unresolved' — the migration marker, not a "
+              "position; set the real value: record.py set <id> play_stage <stage>"
+              % n_play_unres)
     return 0
 
 

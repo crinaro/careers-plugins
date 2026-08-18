@@ -38,8 +38,8 @@ reasoning prose anywhere.
 >    `.git/push_token`** — reaching for it IS the violation.
 > 2. **Touch the dashboard** — never generate, never publish. Publishing mid-run puts unreviewed
 >    state in front of the candidate.
-> 3. **Edit `## 🔗 Session Handoff` or add to `## ⚡ Your Move`** in `focus.md`. Propose them in
->    your report; the main session has context you never saw.
+> 3. **Edit `handoff.md` or write into `data/asks.jsonl`/`data/commitments.jsonl`**. Propose
+>    additions in your report; the main session has context you never saw.
 > 4. **Send anything** — message, connection request, or application.
 >
 > **This has been violated three times.** If any of it "seems necessary," that is the signal to
@@ -157,7 +157,7 @@ recover it. Escalate ONCE, in order: (1) `~/.claude/jobsearch/run wake_chrome.sh
 navigate; (2) still dead → `~/.claude/jobsearch/run wake_chrome.sh --relaunch` (full quit + reopen; Chrome
 restores the session, nothing is lost), wait for reconnect, retry ONCE; (3) still dead → report
 `BROWSER UNAVAILABLE` and queue the work via `deferred.py`. **Never loop the relaunch** — quitting
-the candidate's real browser repeatedly while he works is worse than a skipped pass. Check the
+the candidate's real browser repeatedly while they work is worse than a skipped pass. Check the
 wake-chrome log tail (`~/.claude/scheduled-tasks/wake-chrome.log`) to confirm what the script
 actually did before claiming recovery. Then `tabs_context_mcp` with `createIfEmpty:true` —
 a fresh run never has an existing tab group, and that alone does not mean the browser is
@@ -184,6 +184,26 @@ response (<an employer>) went unseen on 2026-08-04 while the sweep read "no new
 replies." The candidate's mailbox receives NO LinkedIn notification emails, so this browser pass
 is the ONLY detector. (Per the candidate, 2026-08-04: "if our process has me sending messages &
 connection requests, it should be checking linkedin messages.")
+
+**⭐ PER-SURFACE COVERAGE IS PART OF THE REPORT — name each of (a)–(d) as REACHED or
+UNREACHABLE, every pass (public #15).** The message-requests surface (b) was unreachable in
+three consecutive runs while (a), (c) and (d) stayed reachable in the same runs — so "the reply
+check ran" is NOT evidence that (b) was covered, and inbound messages landing there are
+invisible while the gap stands. **Treat (b) as a declared blind spot, not a covered surface:**
+still attempt it every pass (the failure may be UI drift and a later run may get through), and
+when any of the four is unreachable while the browser otherwise works, record it exactly like a
+browser outage, scoped to the surface:
+
+```bash
+~/.claude/jobsearch/run journal.py --run <id> --gap linkedin:message-requests --reason surface-unreachable \
+  --closes-when "a run reads the message-requests surface and reports what it found"
+```
+
+and name it in the report's blocked section. ⚠️ **A sub-surface silently skipped is identical,
+from the outside, to one read and found empty** — the same shape `route.py` exists to prevent
+for sourcing channels, and the same shape as the truncating Sent-Invitations list below. Never
+report the reply check as complete without saying which of its four surfaces you actually
+reached.
 
 **2. INBOX SCAN** — new recruiter InMail/messages not in the tracker.
 
@@ -272,7 +292,11 @@ later claim depends on it, and a reader cannot tell from the findings alone.
 
 Then, per capability you ran: what you found, or an explicit "nothing new". ⚠️ **A capability you
 did NOT run is named as not run** — a silent omission and a genuine zero are indistinguishable,
-and this agent covers the only surface where LinkedIn replies exist.
+and this agent covers the only surface where LinkedIn replies exist. **For the REPLY CHECK, that
+resolution goes down to the surface: name (a) sent invitations, (b) message requests, (c) inbox
+Focused+Other, (d) notifications individually as REACHED or UNREACHABLE — (b) is a known repeat
+offender (public #15), and an unreached (b) folded into "reply check: done" is the exact defect
+that issue records.**
 
 Close with anything blocked: a session that was not signed in, a page that would not render, a
 call that timed out. **`BROWSER UNAVAILABLE` is a complete, acceptable answer** and is far better

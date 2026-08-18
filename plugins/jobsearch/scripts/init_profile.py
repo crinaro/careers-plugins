@@ -44,7 +44,7 @@ DATA = os.path.join(ROOT, "data")
 # The empty stores. Every one is a valid (empty) JSONL — validate_data.py must pass on a fresh
 # install, or a new user's first gate run fails and they conclude the system is broken.
 STORES = ("opportunities.jsonl", "companies.jsonl", "channels.jsonl", "messages.jsonl",
-          "inbox.jsonl", "pending_actions.jsonl")
+          "inbox.jsonl", "pending_actions.jsonl", "asks.jsonl", "commitments.jsonl")
 
 DIRS = ("data", "kb", "call_preps", "drafts_assets")
 

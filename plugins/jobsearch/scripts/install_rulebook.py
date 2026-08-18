@@ -41,10 +41,38 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _root import profile_root, engine_root
+from _root import profile_root, engine_root, is_tracked_fixture, is_engine_root
 
 STAMP = "<!-- installed-from: jobsearch %s | do not edit here; edit the plugin's RULEBOOK.md and re-run install_rulebook.py -->"
 MARKER = "<!-- installed-from: jobsearch "
+
+# ⭐ dev #81 — a ~38KB CLAUDE.md landed in the checked-in tests/fixtures/profile/ TWICE during
+# the 0.24.0 work. profile_root() legitimately resolves to that fixture when nothing else looks
+# like a profile (test_checks.py's own fallback, deliberately, for READS) or when
+# CLAUDESEARCH_ROOT is explicitly pointed there — but this script writes, and the fixture is
+# GENERATED (make_fixture.py) and must never be hand- or self-edited. `_root.is_tracked_fixture`
+# already carried this exclusion for the remembered pointer (`_remember`); this script never
+# inherited it. See that module's docstring for why the check stays narrower than
+# `is_disposable_profile` — a tempfile.mkdtemp() scratch profile stays a legitimate write target.
+_FIXTURE_REFUSAL = (
+    "  ⛔ %s is the checked-in test fixture (or lives inside one), not a real profile — "
+    "the rulebook writer refuses to read or write there. It is GENERATED, not hand-maintained; "
+    "a self-heal write would be silent drift indistinguishable from the real thing.")
+
+# ⭐ dev #87 — the sibling case. `profile_root()`'s own "return CWD" fallback can legitimately
+# answer with the ENGINE'S OWN ROOT (a maintenance session, a CI runner, any run with no profile
+# anywhere above it and nothing remembered) — and this script WRITES a stamped CLAUDE.md over
+# whatever is at `dest_dir`. Landing there and writing would overwrite the engine's OWN
+# maintenance rulebook (this repository's real, hand-maintained `CLAUDE.md`) with the profile
+# template, in the one checkout every session here depends on. `refresh_if_stale()`'s "unmanaged"
+# branch happens to catch this too (the real CLAUDE.md carries no install stamp) — but that
+# safety is incidental to a stamp format, not a designed refusal, and `main()`'s direct-write path
+# does not check for "unmanaged" at all. Refuse explicitly, the same shape as the fixture case.
+_ENGINE_ROOT_REFUSAL = (
+    "  ⛔ %s IS THE ENGINE'S OWN ROOT, not a profile — the rulebook writer refuses to read or "
+    "write there. profile_root() found no profile anywhere above the working directory and "
+    "nothing remembered, and fell back to the CWD, which is this engine checkout. Run this from "
+    "inside a real profile, or pass --dest.")
 
 
 def engine_version():
@@ -97,6 +125,10 @@ def refresh_if_stale(dest_dir=None, apply_it=True):
     dest_file = os.path.join(dest_dir, "CLAUDE.md")
     version = engine_version()
 
+    if is_tracked_fixture(dest_dir):
+        return "fixture", [_FIXTURE_REFUSAL % dest_dir]
+    if is_engine_root(dest_dir):
+        return "engine-root", [_ENGINE_ROOT_REFUSAL % dest_dir]
     if not os.path.isdir(dest_dir):
         return "no-profile", []
     if os.path.islink(dest_file):
@@ -144,6 +176,15 @@ def main():
     dest_dir = args.dest or profile_root()
     dest_file = os.path.join(dest_dir, "CLAUDE.md")
     version = engine_version()
+
+    if is_tracked_fixture(dest_dir):
+        print(_FIXTURE_REFUSAL % dest_dir, file=sys.stderr)
+        return 2
+
+    if is_engine_root(dest_dir):
+        print(_ENGINE_ROOT_REFUSAL % dest_dir, file=sys.stderr)
+        return 2
+
     have = installed_stamp(dest_file)
 
     if args.check:

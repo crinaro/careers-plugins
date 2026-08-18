@@ -97,12 +97,25 @@ def main():
         sys.stderr.write("--today must be YYYY-MM-DD\n")
         return 2
 
-    with open(FOCUS, encoding="utf-8") as fh:
-        text = fh.read()
+    # dev #93 — focus.md is retired as a source of state (the 0.25.0 migration replaces it
+    # with a frozen stub). The `🔧 Open` queue it once held was itself retired 2026-08-06:
+    # engine defects are GitHub issues on the plugin's repository now, and the surviving
+    # "needs the candidate" asks are data/asks.jsonl rows with kind=system, checked by
+    # check_sections.py / check_action_claims.py. An absent or stubbed focus.md is therefore
+    # the HEALTHY state here, and must never read as a failed audit.
+    try:
+        with open(FOCUS, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        print("focus.md is absent — retired as a source of state (dev #93). Process debt")
+        print("lives on the engine repository's issue tracker; nothing to drain here.")
+        return 0
 
     open_sec = section(text, OPEN_HEADER)
     if not open_sec:
         print("No '%s' section found in focus.md." % OPEN_HEADER)
+        print("(Retired queue — engine defects are filed as issues; system asks live in")
+        print(" data/asks.jsonl. This is the invariant holding, not a missing section.)")
         return 0
 
     rows = items(open_sec)

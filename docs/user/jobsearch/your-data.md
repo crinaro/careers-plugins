@@ -29,6 +29,8 @@ shows up as a one-line diff rather than a reformatted file.
 | `channels.jsonl` | where roles come from: job boards, company career pages, recruiting firms, referrals |
 | `opportunities.jsonl` | the roles themselves, with their contacts, outreach, applications and fit analysis |
 | `messages.jsonl` | every communication, both directions, with its full text |
+| `asks.jsonl` | things waiting on you — a role decision or a piece of system upkeep |
+| `commitments.jsonl` | what is scheduled — calls, deadlines, follow-ups due on a date |
 
 ### The documents
 
@@ -36,7 +38,8 @@ shows up as a one-line diff rather than a reformatted file.
 |---|---|
 | `resume.md` | your resume, plus an *Additional Detail* section for things a resume never says |
 | `projects.md` | projects and their scale, each with a note about when it is worth surfacing |
-| `focus.md` | what needs your attention now — generated, not hand-maintained |
+| `focus.md` | retired — a frozen stub. See *"focus.md is retired"* below |
+| `handoff.md` | a short letter one session leaves for the next, so nothing gets lost between runs |
 | `drafts.md` | staged messages awaiting your review |
 | `cover_letters.md` | letters, one anchor per role |
 | `kb_<company>.md` | what you have learned about a specific company |
@@ -97,6 +100,7 @@ The main record. Everything about one role hangs off it.
 | `location` | `{type, primary, remote, declared}` — see *contested settings* below |
 | `status` | what you are **doing** about it |
 | `stage` | where it **is** in the funnel |
+| `play_stage` | for a role you are actively pursuing after applying, which step of that chase you are on — see below |
 | `verdict` | `pursue` · `pass` · `parked` · `undecided` |
 | `jd_url` | the posting. Required as a URL **or an explicit `null`** — never simply missing |
 | `sightings` | every time this role was seen, and where |
@@ -114,7 +118,7 @@ They are orthogonal and you want both. A live pursuit waiting on a recruiter is
 `status: active-pursuit`, `stage: contacted`. A role you have shelved is `status: backlog`,
 `verdict: parked`, `stage: sourced`.
 
-### Two values that exist to stop a guess
+### Three values that exist to stop a guess
 
 **`location.type: unresolved`.** Some postings declare two work settings at once — tagged both
 hybrid and remote. Picking one silently decides which compensation floor applies. So instead the
@@ -126,6 +130,13 @@ to the employer. It is never quietly dropped.
 on. Recording it as `passed` would overstate how selective you are being. `expired` records the
 *absence* of a decision — and because you never declined it, a repost of that same role surfaces
 as a fresh signal rather than being filtered out.
+
+**`play_stage: unresolved`.** Where a role you are pursuing sits in the sequence after you apply
+— verify the posting is still live, identify the recruiter, reach them through someone who knows
+you, use that name with the recruiter, wait for the reply — is tracked as an ordered field so it
+can be sorted and counted. Older records that predate this field carry the same `unresolved`
+marker rather than a guess. If you see it on a role, set the real step once you know it; nothing
+downstream invents one for you.
 
 ### Contacts — the people
 
@@ -200,6 +211,61 @@ words, a verdict of `aligned` · `partial` · `not-aligned` · `unknown`, and th
 analysis that lists only matches is marketing rather than analysis.
 
 Counts are always **computed** from these rows, never stored.
+
+## Asks and commitments — what is waiting on you, and what is scheduled
+
+These two files back the "needs you" and "this week" views on your dashboard. Both are one
+record per line, same as the other datasets, and both exist so those views are computed from
+data rather than kept up to date by hand.
+
+**`asks.jsonl`** — anything waiting on a decision or action from you.
+
+| field | what it is |
+|---|---|
+| `kind` | `role` (about one opportunity) or `system` (tooling, a credential, a setting) — decides which group it shows in |
+| `title`, `ask` | what it is, and what is actually being asked |
+| `opp_id` | the role it concerns, if any |
+| `resolved_on`, `resolution` | set together, once, when it is answered |
+
+**An ask disappears from every view the moment it is resolved** — resolving it is what removes
+it, not editing its text into a "done" line in place. The row itself stays as history.
+
+**`commitments.jsonl`** — things scheduled on a date: a call, a deadline, a follow-up.
+
+| field | what it is |
+|---|---|
+| `date` | ISO `YYYY-MM-DD`, or the literal `unresolved` if a date could not be read from its source and needs your eyes |
+| `title`, `note` | what it is |
+| `opp_id` | the role it concerns, if any |
+
+Only commitments on or after today show on your dashboard; past ones stay in the file as a
+record rather than being deleted.
+
+---
+
+## focus.md is retired
+
+Earlier versions kept a hand-maintained file, `focus.md`, listing what needed your attention and
+what was scheduled that week. It caused a real problem: an item copied into it by hand could go
+stale sitting next to the same information generated fresh from your data, and nothing caught
+the two disagreeing.
+
+If you are upgrading from an older version, this happened to your profile automatically, once,
+the first time you used it after the update:
+
+- Anything under **Your Move** or **Process — Needs the candidate** moved into `asks.jsonl`.
+- Anything under **This Week** moved into `commitments.jsonl`. A date that could not be read
+  mechanically was written as `unresolved` rather than guessed — look for that value and set the
+  real date once you know it.
+- The **Session Handoff** note moved into `handoff.md`, unchanged.
+- Anything else with real content was appended to `process_archive.md`, so nothing you had
+  written was discarded.
+- `focus.md` itself became a short stub naming where its content went. Nothing reads or writes
+  it anymore, and it is safe to delete once you have confirmed the above.
+
+Nothing in this file was silently dropped — every line either has a new home or is sitting in
+`process_archive.md`, and the migration will not touch `focus.md` at all if anything about the
+move could not be verified, so you never end up with content missing from both places.
 
 ---
 

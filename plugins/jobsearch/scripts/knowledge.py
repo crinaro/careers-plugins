@@ -28,7 +28,7 @@ cannot read, and a resolver against data that already exists.
 
 Organization-named prep notes were already tried: `call_prep_<company>.md` lived at the repo
 root, and `generate_dashboard.py`'s docstring still records one being promoted to
-`kb/<company>.md`. On 2026-08-03 the candidate himself asked for the current form — preps go
+`kb/<company>.md`. On 2026-08-03 the candidate directly asked for the current form — preps go
 stale as DOCUMENTS long before their content does, one day's file can cover several unrelated
 calls, so live preps are date-keyed in `call_preps/` and durable content is promoted to the
 org-keyed `kb/`. A regression test (`test_promoted_kb_knowledge_survived`) guards that

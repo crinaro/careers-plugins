@@ -28,9 +28,9 @@ send queued now and executed by an unattended run three hours later is not fresh
 approval-at-a-distance for an irreversible, outward-facing act. Building that would quietly convert
 a hard rule into a soft one.
 
-**And the constraint bites far less than it looks**, because the candidate sends everything himself anyway.
+**And the constraint bites far less than it looks**, because the candidate sends everything directly anyway.
 When Claude has sent a LinkedIn message it was always *"on the candidate's explicit in-session instruction"*,
-with him present at that moment. That workflow simply requires the laptop and his attention
+with them present at that moment. That workflow simply requires the laptop and their attention
 together — which is exactly what it required before this queue existed.
 
 **So what belongs here is laptop-bound work that is SAFE unattended and REVERSIBLE:** a contact-path
@@ -155,8 +155,8 @@ def main():
             print("   run later is not fresh approval — it is approval-at-a-distance for an")
             print("   irreversible, outward-facing act.")
             print()
-            print("   the candidate sends everything himself anyway. Put the DRAFT in drafts.md and let")
-            print("   him send it when he is at the laptop with the thread in front of him.")
+            print("   the candidate sends everything directly anyway. Put the DRAFT in drafts.md and let")
+            print("   them send it when they are at the laptop with the thread in front of them.")
             return 1
         rid = "act-%s" % now.strftime("%Y%m%dT%H%M%S")
         reqs = [r.strip() for r in args.requires.split(",") if r.strip()]
@@ -236,7 +236,7 @@ def main():
     print("\n" + "=" * 72)
     print("  Claim:     python3 scripts/deferred.py --claim <id>")
     print("  Mark done: python3 scripts/deferred.py --done <id>")
-    print("  ⛔ Sends are never queued here — the candidate sends those himself, at the laptop.")
+    print("  ⛔ Sends are never queued here — the candidate sends those directly, at the laptop.")
     return 0
 
 

@@ -173,6 +173,21 @@ def worker_id(caps):
     return "%s:%s" % (kind, host)
 
 
+def guard_report():
+    """dev #111: the outbound-click-guard status line docs/deployment.md promises from this
+    report. ⭐ DELIBERATELY NOT A CAPABILITY — whoami declares capability for CLAIMING work; the
+    guard is a safety net, and a probe result must never gate whether the hook runs. So this is
+    printed OUTSIDE the capability block, `--can` does not accept it, and the CAPABILITIES tuple
+    (written into pending_actions `requires`) is untouched. Returns a small dict, or None when
+    the status is unavailable — an absent answer must read as absent, never as ACTIVE."""
+    try:
+        import guard_outbound_click as _guard
+        st = _guard.guard_status()
+        return {"verdict": st["verdict"], "line": st["line"]}
+    except Exception:
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="What can this environment actually do?")
     ap.add_argument("--json", action="store_true")
@@ -189,7 +204,8 @@ def main():
         return 0 if caps[args.can] else 1
 
     if args.json:
-        print(json.dumps({"worker": worker_id(caps), "capabilities": caps}, indent=2))
+        print(json.dumps({"worker": worker_id(caps), "capabilities": caps,
+                          "outbound_click_guard": guard_report()}, indent=2))
         return 0
 
     print("WORKER — %s" % worker_id(caps))
@@ -202,6 +218,12 @@ def main():
         elif name == "keychain":
             note = "  Gmail scans; a credentials-placement decision, not a hard lock"
         print("  %-10s %s%s" % (name, mark, note))
+
+    g = guard_report()
+    print("\n  OUTBOUND-CLICK GUARD (a safety net, not a capability — it never gates claiming)")
+    print("    %s" % (g["line"] if g else
+                      "status unavailable — guard_outbound_click.py could not be consulted; "
+                      "treat as UNKNOWN, never as active"))
 
     print("\n  WHAT THIS WORKER MAY CLAIM")
     if caps["chrome"]:

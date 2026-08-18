@@ -13,7 +13,7 @@ remembering to scan a 97-row table.
 
   1. SILENT OUTREACH -- a message/connection request was sent, the status still
      says awaiting/pending/no-reply, and N+ days have passed.
-  2. ACTIVE PURSUIT, NO NEXT ACTION -- a focus.md pursuit whose text contains no
+  2. ACTIVE PURSUIT, NO NEXT ACTION -- a live pursuit record whose text contains no
      recognizable next step. "Pursue" without a next action is how the 2026-07-15
      "next action identified != next action executed" gap happened.
 

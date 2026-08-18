@@ -71,13 +71,17 @@ REPO = _pof()
 # edited -- so every line it flagged was unfixable by construction and would
 # have been re-reported every run forever. Role-level decay is now caught by
 # check_followups.py against data/opportunities.jsonl, which IS live.
-FILES = ["focus.md", "network.md", "drafts.md"]
+# `handoff.md` added with dev #93: it is the surviving hand-written narrative (the session
+# handoff letter) and exactly the place a decayed "awaiting X" claim now lives. focus.md is
+# kept for profiles not yet migrated; after the 0.25.0 migration it is a static stub, which
+# costs nothing to scan and can never flag.
+FILES = ["handoff.md", "focus.md", "network.md", "drafts.md"]
 
 # Claims that decay with time - someone is blocked, or something is unresolved.
 _REF = _candidate_ref()
 AGING = re.compile(
-    r"awaiting (?:%s|his|your|approval|a reply|response|go-?ahead)" % _REF
-    + r"|pending (?:%s|approval|his|your)" % _REF
+    r"awaiting (?:%s|his|her|their|your|approval|a reply|response|go-?ahead)" % _REF
+    + r"|pending (?:%s|approval|his|her|their|your)" % _REF
     + r"|await(?:s|ing) (?:%s'?s )?(?:go-?ahead|nod|approval|decision|review)" % _REF
     + r"|blocked on %s" % _REF
     + r"|sitting since|has sat|hold expired"

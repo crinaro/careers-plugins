@@ -23,7 +23,7 @@ DENY when a ref-based click resolves — via the transcript's most recent page-r
 THIS agent's own chain — to an element whose accessible name matches an outbound-terminal verb
 (send, connect, invite, apply, submit application, InMail, post, share). Third-party-directed
 verbs only: "Save" on the candidate's own profile is deliberately OUTSIDE the pattern, because
-the approved-edit path (profile-optimizer drafts, the candidate applies it himself) is a
+the approved-edit path (profile-optimizer drafts, the candidate applies it directly) is a
 different and recoverable act.
 
     click has no `ref` (coordinate click)                       -> ALLOW (outside v1 — see below)
@@ -96,9 +96,75 @@ LIVE `transcript_path` from the SessionStart payload and asserts its envelope pa
 failure it prints a `systemMessage`: the guard is inert on this surface, browser sends are
 unguarded. It never blocks startup — same fail-open posture as the click path.
 
+## dev #102 — two distinct ways the transcript lookup can fail, and a known-inert surface must
+## stay loud, not just announce itself once
+
+Reported from a real machine, twice, on different days: the selftest could not open the
+transcript it derived, and — because the LIVE click path (`evaluate()`) reads
+`payload.get("transcript_path")` the same way — every click on that surface was unresolvable
+and therefore allowed. Two different bugs hide behind that one report:
+
+1. **The payload can carry no `transcript_path` at all.** `resolve_transcript_path()` now falls
+   back to `derive_fallback_transcript_path()` — the observed on-disk layout,
+   `~/.claude/projects/<cwd with "/" -> "-">/<session_id>.jsonl` — when the key is absent or
+   empty. ⚠️ This is a **guess from an undocumented convention**, not the contract: Claude Code
+   promises nothing about it, so `diagnose_transcript()` still has to prove the derived path
+   actually opens and parses before anything relies on it, exactly as it would the payload's own
+   value. A path the payload DOES supply is never second-guessed through the fallback — a
+   present-but-broken value is itself informative (see next point) and guessing over it would
+   destroy that information.
+2. **A path is present but cannot be opened or does not parse.** `diagnose_transcript()` (shared
+   by `--selftest` and the live click path, so the two can never disagree about what "inert"
+   means) captures the real exception type and message rather than a bare "failed", and
+   separately distinguishes a legitimately empty fresh transcript (fine) from one whose lines
+   are present but NONE match the expected envelope (a format shift — not fine).
+
+**The design gap this closes:** the fail-open policy for one unresolvable click is unchanged —
+an unclassifiable click still allows and reports. But before this fix, "the guard cannot resolve
+anything on this surface" degraded to a single `systemMessage` at `SessionStart` and then
+SILENCE: every later click that could not classify only got the same generic per-click note
+("no resolvable page-read... for ref X"), indistinguishable from an ordinary one-off ambiguity.
+`evaluate()` now re-derives `diagnose_transcript()`'s verdict on every single invocation (no
+persisted state to go stale) and, when it says the surface is unusable, every click's note
+carries the loud, distinct "GUARD INERT on this surface" wording instead of the generic one —
+on EVERY click, not once at startup. Whether a known-inert guard should refuse rather than warn
+is a fail-open POLICY decision, left untouched here — see the hand-back for dev #102.
+
+## dev #111 — the guard's status is QUERYABLE, never only loud in the moment
+
+dev #102 made an inert guard loud on every click — and still only inside the session where it
+happened. Nothing could answer "has this install had an inert guard for two days?"; the one
+reporter who knew (public #12) knew because they personally noticed across two sessions. That is
+this marketplace's recurring defect — a fact a run already knows written into a scrolling
+advisory instead of the queryable store — and the fix copies the established shape (`act_by`,
+`precondition.py`, `blocked_until`): a named field, a strict reader that refuses what it cannot
+parse, and a resolver against data that already exists.
+
+- **Every selftest, and the first click-path diagnosis per session (or any state change),
+  records a coded `guard_status` event** via `_diag.py` — the diagnostics log that carries no
+  user data by construction, so the record can be pasted into an issue as-is. Fields are CODES
+  (`state`: ok|inert, `source`: selftest|click, `reason`: no-transcript-path | open-failed |
+  format-shift | fixture-fail | ok), never the prose detail — the prose stays in the session's
+  own systemMessage where it already is. Recording is best-effort and can never change a
+  verdict or block a click.
+- **`guard_status()` answers the operator's question from that record**: ACTIVE / INERT (since
+  when, across how many sessions) / UNKNOWN (no observation yet) / BROKEN (not registered in
+  hooks.json, or the parser fixture fails — inert EVERYWHERE, not just one surface). `doctor`
+  and `whoami` carry this line, as `docs/deployment.md` specified in the #78 audit;
+  `--status` prints it standalone.
+- ⚠️ **A status line that says "live" against an inert guard is worse than no line** — so the
+  verdict is derived only from recorded observations and the executable fixture, never from
+  the guard file merely existing. `TestOutboundClickGuardStatus` proves the INERT verdict
+  against a genuinely unopenable transcript (the exact Errno-2 reproduction from a real
+  SessionStart), and was watched fail against an induced always-ACTIVE bug before shipping.
+- ⚠️ **Whether a known-inert guard should refuse rather than warn is still the owner's open
+  fail-open policy decision** — dev #111 says so explicitly. Nothing here changes the guard's
+  verdict on any click; this only makes the inertness durable and queryable.
+
 Deliberately NOT in `whoami.py`'s capability set: `whoami` declares capability for CLAIMING
 work; this is a safety net, not a capability, and a probe result must never gate whether the
-hook runs.
+hook runs. `whoami` prints the status line OUTSIDE its capabilities block, and `--can` does
+not accept it.
 
 Protocol: PreToolUse stdin is the hook payload; exit 2 blocks and stderr is shown to the model
 (same as `guard_engine_writes.py`). `--selftest` never blocks; it prints and exits 0 always.
@@ -214,6 +280,77 @@ def load_transcript(path):
         return records
     except Exception:
         return None
+
+
+def derive_fallback_transcript_path(payload):
+    """⚠️ FALLBACK ONLY — NOT the documented contract (dev #102). Claude Code does not promise
+    this layout; it is this guard's own observation of the on-disk shape —
+    ~/.claude/projects/<cwd with every "/" replaced by "-">/<session_id>.jsonl — used ONLY when
+    the payload itself carries no `transcript_path` at all. Returns None when the payload lacks
+    what the derivation needs (`session_id`, `cwd`), rather than guessing further. The caller
+    (`diagnose_transcript`) still has to prove whatever this returns actually opens and parses —
+    this function only proposes a path, it never vouches for it."""
+    session_id = payload.get("session_id")
+    cwd = payload.get("cwd")
+    if not session_id or not cwd:
+        return None
+    slug = cwd.replace("\\", "-").replace("/", "-")
+    if not slug:
+        return None
+    return os.path.join(os.path.expanduser("~"), ".claude", "projects", slug,
+                        "%s.jsonl" % session_id)
+
+
+def resolve_transcript_path(payload):
+    """(path_or_None, used_fallback). Prefers the payload's own `transcript_path` whenever it is
+    present and non-empty; falls back to `derive_fallback_transcript_path()` only when that key
+    is absent or empty. A path the payload DOES supply is never second-guessed through the
+    fallback, even if it turns out to be unopenable — see the dev #102 docstring section above
+    for why a present-but-broken value must stay informative rather than be papered over."""
+    path = payload.get("transcript_path")
+    if path:
+        return path, False
+    return derive_fallback_transcript_path(payload), True
+
+
+def diagnose_transcript(path):
+    """(usable: bool, detail: str) — can this guard trust `path` as a classification source at
+    all? Shared by `--selftest` and the live click path (`evaluate()`) so the two can never
+    disagree about what "inert" means — dev #102 was exactly that disagreement's blast radius.
+
+    Deliberately does NOT reuse `load_transcript()`, which silently skips a line that fails to
+    parse (correct for classification — one bad line must not blind a click's resolution). That
+    leniency would make this indistinguishable from the exact failure it exists to catch: a
+    transcript whose envelope shifted so every line fails to parse looks identical, through
+    `load_transcript()`, to a brand-new empty session — zero records either way. So this reads
+    the file directly and tells "no lines yet" (fine) apart from "lines present, none match the
+    expected {uuid, message} envelope" (a format shift, and not fine)."""
+    if not path:
+        return False, ("no transcript_path in the payload, and no fallback could be derived "
+                        "(need both session_id and cwd)")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = [l.strip() for l in fh if l.strip()]
+    except Exception as e:
+        # dev #102's second failure mode: capture the ACTUAL reason, not a generic failure.
+        return False, ("transcript_path %r could not be opened — %s: %s"
+                        % (path, type(e).__name__, e))
+    if not lines:
+        return True, ("transcript at %s is empty (fresh session) — nothing to disagree with "
+                      "yet" % path)
+    matching = 0
+    for line in lines:
+        try:
+            rec = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(rec, dict) and ("uuid" in rec or "message" in rec):
+            matching += 1
+    if matching == 0:
+        return False, ("transcript_path %r has %d line(s) but NONE parsed as the expected "
+                        "{uuid, message} envelope — format shift?" % (path, len(lines)))
+    return True, ("transcript at %s parses as JSONL (%d of %d line(s) match the expected "
+                  "envelope)" % (path, matching, len(lines)))
 
 
 def _content_blocks(record):
@@ -334,8 +471,26 @@ def classify_one(action_input, page_text):
     return "ALLOW", "ref %s resolved to %r — not outbound-terminal" % (ref, label)
 
 
+# Set by evaluate() to this invocation's (usable, diag_detail), or None when the call never
+# reached diagnosis (unguarded tool, no inputs). Read by main_hook() for status recording
+# (dev #111) WITHOUT re-reading the transcript — a third full read per click of a possibly
+# large file, purely for bookkeeping, would be paying correctness money for accounting.
+# A hook process runs evaluate() exactly once, so a module global is safe there; direct
+# callers (tests, doctor) never read it.
+_LAST_DIAGNOSIS = None
+
+
 def evaluate(payload):
-    """The whole classify-a-hook-call pipeline. Returns (deny, deny_reasons, notes)."""
+    """The whole classify-a-hook-call pipeline. Returns (deny, deny_reasons, notes).
+
+    dev #102: `diagnose_transcript()` is re-derived on THIS invocation, fresh, every time — no
+    persisted "the selftest failed at startup" flag to go stale. When it says the surface is
+    unusable, that is exactly the condition the SessionStart selftest would also hit, so an
+    unresolved click's note is escalated to the loud "GUARD INERT" wording rather than the
+    generic per-click ambiguity note — and because this runs per hook invocation, that escalation
+    happens on EVERY click while the condition persists, not once at startup."""
+    global _LAST_DIAGNOSIS
+    _LAST_DIAGNOSIS = None
     tool_name = payload.get("tool_name") or ""
     if tool_name not in GUARDED_CLICK_TOOLS:
         return False, [], []
@@ -345,7 +500,10 @@ def evaluate(payload):
     if not inputs:
         return False, [], []
 
-    records = load_transcript(payload.get("transcript_path"))
+    transcript_path, _used_fallback = resolve_transcript_path(payload)
+    usable, diag_detail = diagnose_transcript(transcript_path)
+    _LAST_DIAGNOSIS = (usable, diag_detail)
+    records = load_transcript(transcript_path) if usable else None
     by_uuid = index_by_uuid(records) if records else {}
     anchor = find_anchor(records) if records else None
 
@@ -357,7 +515,14 @@ def evaluate(payload):
         if verdict == "DENY":
             deny_reasons.append(reason)
         elif verdict is None:
-            notes.append(reason)
+            if not usable:
+                notes.append(
+                    "GUARD INERT on this surface (the same condition --selftest checks at "
+                    "SessionStart) -- %s -- this click was allowed because nothing on this "
+                    "surface can be classified, not because it was individually ambiguous"
+                    % diag_detail)
+            else:
+                notes.append(reason)
     return bool(deny_reasons), deny_reasons, notes
 
 
@@ -369,6 +534,14 @@ def main_hook():
 
     try:
         denied, deny_reasons, notes = evaluate(payload)
+
+        # dev #111: make this invocation's diagnosis durable and queryable. Best-effort,
+        # AFTER classification, and never able to change the verdict below.
+        if _LAST_DIAGNOSIS is not None:
+            usable, diag_detail = _LAST_DIAGNOSIS
+            record_status("ok" if usable else "inert", "click",
+                          "ok" if usable else _reason_code(diag_detail),
+                          payload.get("session_id"))
 
         if denied:
             sys.stderr.write(
@@ -390,6 +563,209 @@ def main_hook():
         return 0
     except Exception:
         return 0  # fail open, deliberately — see module docstring
+
+
+# --------------------------------------------------------------------------------------
+# dev #111 — durable, queryable guard status. See the module docstring section of the same
+# name for the design; the shape is _diag.py's (coded scalars only, never prose, so the
+# record itself can cross into a public issue).
+# --------------------------------------------------------------------------------------
+
+STATUS_EVENT = "guard_status"
+STATUS_GUARD = "outbound-click"
+
+
+def _import_diag():
+    """The diagnostics logger, or None. A hook must run even where the sibling module is
+    somehow unimportable — recording is bookkeeping, never a dependency of the verdict."""
+    try:
+        import _diag
+        return _diag
+    except Exception:
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import _diag
+            return _diag
+        except Exception:
+            return None
+
+
+def _reason_code(detail):
+    """Map a `diagnose_transcript()` prose detail to a fixed reason CODE — the only form the
+    diagnostics log accepts (its `redact()` refuses prose, deliberately: prose is where user
+    data hides, and the transcript path embeds the cwd). The prose itself stays in the
+    session's systemMessage, where dev #102 put it."""
+    d = detail or ""
+    if "no transcript_path" in d:
+        return "no-transcript-path"
+    if "could not be opened" in d:
+        return "open-failed"
+    if "NONE parsed" in d:
+        return "format-shift"
+    return "unknown"
+
+
+def read_status_history(path=None):
+    """(records, unreadable_count) — every parseable `guard_status` record in the diagnostics
+    log, oldest first. ⚠️ An unparseable value must be LOUD (CLAUDE.md): a guard_status record
+    whose `state` is not a recognized code is COUNTED and surfaced by `guard_status()`, never
+    silently dropped — a status nobody can read looks handled and is not. Lines that are not
+    guard_status events at all are simply other tools' diagnostics, not defects."""
+    if path is None:
+        diag = _import_diag()
+        path = diag.LOG if diag else None
+    records, unreadable = [], 0
+    if not path or not os.path.exists(path):
+        return records, unreadable
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(rec, dict) or rec.get("event") != STATUS_EVENT:
+                    continue
+                if rec.get("guard") not in (None, STATUS_GUARD):
+                    continue
+                if rec.get("state") not in ("ok", "inert"):
+                    unreadable += 1
+                    continue
+                records.append(rec)
+    except Exception:
+        pass
+    return records, unreadable
+
+
+def record_status(state, source, reason, session_id=None):
+    """Append one coded guard_status event, throttled: skip when the latest record already
+    carries the same (state, session) — so a session contributes one record per state, not one
+    per click, and the ~500-line ring buffer holds days of history instead of minutes. A state
+    CHANGE within a session (inert -> ok after a fix, or the reverse) always records.
+    Best-effort and silent: recording must never alter a verdict or block anything."""
+    try:
+        diag = _import_diag()
+        if diag is None:
+            return
+        records, _ = read_status_history(diag.LOG)
+        if records:
+            last = records[-1]
+            if last.get("state") == state and (last.get("session") or None) == (session_id or None):
+                return
+        diag.log(STATUS_EVENT, guard=STATUS_GUARD, state=state, source=source,
+                 reason=reason, session=session_id)
+    except Exception:
+        pass
+
+
+def _registration(hooks_path):
+    """(registered, detail) — is this guard actually wired into hooks.json, with the matcher it
+    requires and its selftest at SessionStart? A guard file that exists but is not registered is
+    inert EVERYWHERE, and a status line must never report 'live' from the file's mere presence."""
+    want = "|".join(GUARDED_CLICK_TOOLS)
+    try:
+        with open(hooks_path, encoding="utf-8") as fh:
+            cfg = json.load(fh)
+    except Exception as e:
+        return False, "hooks.json unreadable at %s (%s)" % (hooks_path, type(e).__name__)
+    pre = (cfg.get("hooks") or {}).get("PreToolUse") or []
+    click_entries = [e for e in pre
+                     if any("guard_outbound_click.py" in (h.get("command") or "")
+                            for h in e.get("hooks") or [])]
+    if not click_entries:
+        return False, "guard_outbound_click.py is not wired into any PreToolUse entry"
+    if not any(e.get("matcher") == want for e in click_entries):
+        return False, ("PreToolUse matcher drifted from GUARDED_CLICK_TOOLS "
+                       "(check_click_guard_matcher.py has the detail)")
+    starts = (cfg.get("hooks") or {}).get("SessionStart") or []
+    if not any(("guard_outbound_click.py" in (h.get("command") or "")
+                and "--selftest" in (h.get("command") or ""))
+               for e in starts for h in e.get("hooks") or []):
+        return False, ("--selftest is not wired into SessionStart, so status is never "
+                       "recorded and an inert surface goes back to being invisible")
+    return True, "PreToolUse matcher matches GUARDED_CLICK_TOOLS; --selftest wired at SessionStart"
+
+
+def guard_status(status_log=None, hooks_path=None):
+    """The guard-status line `docs/deployment.md` promises from doctor/whoami, as data.
+
+    Verdicts, derived ONLY from recorded observations plus the executable fixture — never from
+    this file merely existing:
+
+        BROKEN   not registered in hooks.json, or the parser fixture fails — inert everywhere
+        INERT    the latest recorded observation says the transcript is unusable on that surface
+        ACTIVE   the latest recorded observation verified the transcript parses
+        UNKNOWN  registered and parser-sound, but no session has recorded an observation yet
+
+    The optional parameters are test seams (same shape as CLAUDESEARCH_DIAG_LOG itself)."""
+    engine = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    if hooks_path is None:
+        hooks_path = os.path.join(engine, "hooks", "hooks.json")
+    registered, reg_detail = _registration(hooks_path)
+    fixture_ok, fixture_detail = _selftest_fixture()
+    if status_log is None:
+        diag = _import_diag()
+        status_log = diag.LOG if diag else None
+    history, unreadable = read_status_history(status_log)
+    latest = history[-1] if history else None
+
+    inert_since, inert_sessions = None, 0
+    if latest is not None and latest.get("state") == "inert":
+        stretch = []
+        for rec in reversed(history):
+            if rec.get("state") != "inert":
+                break
+            stretch.append(rec)
+        inert_since = stretch[-1].get("at")
+        inert_sessions = len({r.get("session") for r in stretch})
+
+    if not registered or not fixture_ok:
+        verdict = "BROKEN"
+        line = ("BROKEN — %s — the guard is inert on EVERY surface until this is fixed in "
+                "the engine" % (reg_detail if not registered else fixture_detail))
+    elif latest is None:
+        verdict = "UNKNOWN"
+        line = ("registered and parser-sound, but NO recorded observation yet — the "
+                "SessionStart selftest writes one per session; status is unknown until a "
+                "session starts on this surface")
+    elif latest.get("state") == "inert":
+        verdict = "INERT"
+        line = ("INERT since %s across %s session(s) (latest reason: %s, via %s) — browser "
+                "sends are UNGUARDED on the observed surface; the prose prohibition in "
+                "linkedin-runner.md is the only control there"
+                % (inert_since, inert_sessions, latest.get("reason"), latest.get("source")))
+    else:
+        verdict = "ACTIVE"
+        line = ("ACTIVE — guarding %s; last verified %s (via %s)"
+                % ("|".join(GUARDED_CLICK_TOOLS), latest.get("at"), latest.get("source")))
+    if unreadable:
+        line += (" ⚠️ %d guard_status record(s) were unreadable — an unparseable status looks "
+                 "handled and is not; treat as a defect" % unreadable)
+
+    return {"verdict": verdict, "line": line,
+            "registered": registered, "registered_detail": reg_detail,
+            "fixture_ok": fixture_ok, "fixture_detail": fixture_detail,
+            "observations": len(history), "unreadable": unreadable,
+            "latest": latest, "inert_since": inert_since, "inert_sessions": inert_sessions,
+            "observed_from": history[0].get("at") if history else None,
+            "log_path": status_log}
+
+
+def main_status():
+    st = guard_status()
+    print("outbound-click guard: %s" % st["line"])
+    print("  registered:      %s — %s" % ("yes" if st["registered"] else "NO",
+                                          st["registered_detail"]))
+    print("  parser fixture:  %s — %s" % ("ok" if st["fixture_ok"] else "FAIL",
+                                          st["fixture_detail"]))
+    print("  observations:    %d recorded%s (log: %s)"
+          % (st["observations"],
+             " since %s" % st["observed_from"] if st["observed_from"] else "",
+             st["log_path"]))
+    return 0 if st["verdict"] in ("ACTIVE", "UNKNOWN") else 1
 
 
 # --------------------------------------------------------------------------------------
@@ -448,40 +824,21 @@ def _selftest_fixture():
 
 
 def _selftest_live(payload):
-    """(ok, detail) — opens the LIVE transcript_path from the SessionStart payload and asserts
-    its envelope parses at all. Does not require any particular content — an empty or
-    freshly-started transcript is fine; an unreadable one is not.
-
-    ⚠️ Deliberately does NOT reuse `load_transcript()`, which silently skips a line that fails
-    to parse (correct for classification — one bad line must not blind a click's resolution).
-    That leniency would make this check indistinguishable from the exact failure it exists to
-    catch: a transcript whose envelope shifted so every line fails to parse looks identical,
-    through `load_transcript()`, to a brand-new empty session — zero records either way. So
-    this reads the file directly and tells "no lines yet" (fine) apart from "lines present, none
-    match the expected {uuid, message} envelope" (a format shift, and loud)."""
-    path = payload.get("transcript_path")
-    if not path:
-        return False, "SessionStart payload carried no transcript_path — cannot verify the live envelope"
-    try:
-        with open(path, encoding="utf-8") as fh:
-            lines = [l.strip() for l in fh if l.strip()]
-    except Exception as e:
-        return False, "transcript_path %r could not be opened — %s" % (path, e)
-    if not lines:
-        return True, "live transcript at %s is empty (fresh session) — nothing to disagree with yet" % path
-    matching = 0
-    for line in lines:
-        try:
-            rec = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(rec, dict) and ("uuid" in rec or "message" in rec):
-            matching += 1
-    if matching == 0:
-        return False, ("transcript_path %r has %d line(s) but NONE parsed as the expected "
-                        "{uuid, message} envelope — format shift?" % (path, len(lines)))
-    return True, ("live transcript at %s parses as JSONL (%d of %d line(s) match the expected "
-                  "envelope)" % (path, matching, len(lines)))
+    """(ok, detail) — resolves the LIVE transcript path from the SessionStart payload (the
+    payload's own `transcript_path`, or — dev #102 — a derived fallback when that key is absent)
+    and asserts its envelope parses at all via `diagnose_transcript()`, the SAME function the
+    live click path uses, so this selftest and `evaluate()` can never disagree about what
+    "inert" means. Does not require any particular content — an empty or freshly-started
+    transcript is fine; an unreadable or unparseable one is not."""
+    path, used_fallback = resolve_transcript_path(payload)
+    ok, detail = diagnose_transcript(path)
+    if used_fallback:
+        if path:
+            detail += " [derived fallback path — SessionStart payload carried no transcript_path]"
+        else:
+            detail = ("SessionStart payload carried no transcript_path, and no fallback could "
+                       "be derived (need both session_id and cwd)")
+    return ok, detail
 
 
 def main_selftest():
@@ -492,6 +849,17 @@ def main_selftest():
 
     ok_fixture, detail_fixture = _selftest_fixture()
     ok_live, detail_live = _selftest_live(payload)
+
+    # dev #111: the durable record. One coded event per session start, so "has this install
+    # had an inert guard for two days?" is answerable from data instead of somebody noticing.
+    if not ok_fixture:
+        reason = "fixture-fail"
+    elif not ok_live:
+        reason = _reason_code(detail_live)
+    else:
+        reason = "ok"
+    record_status("ok" if (ok_fixture and ok_live) else "inert", "selftest", reason,
+                  payload.get("session_id"))
 
     print("guard_outbound_click --selftest")
     print("  fixture parser/verb-pattern check: %s — %s" % ("OK" if ok_fixture else "FAIL",
@@ -516,9 +884,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true",
                     help="run from SessionStart; proves the transcript parser is sound here")
+    ap.add_argument("--status", action="store_true",
+                    help="print the guard-status line doctor/whoami carry (dev #111); "
+                         "exit 1 when INERT or BROKEN")
     args = ap.parse_args()
     if args.selftest:
         return main_selftest()
+    if args.status:
+        return main_status()
     return main_hook()
 
 

@@ -28,7 +28,7 @@ The candidate, 2026-08-02:
      are much more important and the process should be able to reconcile because the same data is
      available in mail and LinkedIn."
 
-He was correcting a claim I had made: that 22 outreach rows with `medium: unknown` were
+The candidate was correcting a claim I had made: that 22 outreach rows with `medium: unknown` were
 unrecoverable because "no contemporaneous record exists." **That was wrong.** The record exists —
 the actual messages are still sitting in the mailbox. I had only looked at what the repo had
 written down about itself, not at the source.
@@ -268,6 +268,91 @@ def classify(hits, name, row_date):
     return medium, replied_after, accepted
 
 
+def row_date(r):
+    """The date an outreach row was SENT, or None if it is missing/unparseable.
+
+    A row that cannot be dated can never become the owner of an inbound event — see
+    `attribute_hits` — so it is excluded from candidacy rather than treated as "any time".
+    """
+    try:
+        return datetime.date.fromisoformat(r.get("date") or "")
+    except (ValueError, TypeError):
+        return None
+
+
+def group_by_contact(targets):
+    """Group outreach rows by the REAL PERSON they were sent to — never by opportunity.
+
+    ⭐⭐ dev #101 / public #13 — the SIBLING of dev #65 / public #2 that the original fix did
+    not cover. #65's fix grouped by `(opportunity, person)`, which correctly joins several
+    touches to one recipient WITHIN a single pursuit — the case it was written for. But a
+    recipient contacted about MORE THAN ONE opportunity — an agency recruiter presenting the
+    candidate to several companies is the ordinary case, not an edge case — was split across
+    independent groups, one per opportunity. Each group ran its OWN mail search and its OWN
+    attribution pass, so nothing stopped the SAME inbound message or platform event from being
+    attributed inside more than one group at once: the join was not CONSUMING what it matched,
+    so a single event could satisfy several rows as long as they lived in different
+    opportunities. Three hand-verified false positives in one run traced back to exactly this.
+
+    The join key is the PERSON, full stop. Every outreach row addressed to them, from every
+    opportunity, becomes ONE group with ONE mail search and ONE attribution pass (see
+    `attribute_hits`), so a single inbound event has at most one owner anywhere in the store —
+    not just within one opportunity.
+
+    Terms from every row for the same person are UNION'd (never overwritten), so the search
+    covers every firm name or address the candidate recorded for them, no matter which
+    opportunity recorded it. The residual risk — two genuinely different people who happen to
+    share the exact name string get merged — is the same text-matching risk `person_terms`
+    already carried within a single opportunity; this widens its scope but does not invent it.
+    """
+    groups = {}
+    for o, idx, r in targets:
+        name, terms = person_terms(r.get("to"))
+        if not terms:
+            continue
+        key = name.lower()
+        g = groups.setdefault(key, {"name": name, "terms": [], "rows": []})
+        for t in terms:
+            if t not in g["terms"]:
+                g["terms"].append(t)
+        g["rows"].append((o, idx, r))
+    return groups
+
+
+def attribute_hits(rows, hits):
+    """Attribute each inbound hit to the ONE outreach row it answers.
+
+    The owner is the LATEST row sent on or before the hit's date — a message cannot answer a
+    touch that had not been sent yet. That comparison (`rd <= hd`) is evaluated fresh for every
+    candidate, so no row whose own date is AFTER the hit can ever become its owner, regardless
+    of iteration order or of how many other rows are in play. Sorting by the PARSED date (not
+    the raw string) also closes a second gap: a non-zero-padded date ("2026-1-5") used to sort
+    AFTER "2026-01-10" lexically, which could crown the wrong — but still not-later-than-the-
+    event — row as owner.
+
+    `owner` is a single variable, overwritten as later-and-still-eligible candidates are seen,
+    never a set: each hit lands in at most one row's bucket, so one inbound event can never
+    satisfy two outreach rows once `rows` is the FULL set for that person (see
+    `group_by_contact` — this is the function that must receive every row for the person, not
+    a subset scoped to one opportunity, or the same non-consumption defect reappears one level
+    up).
+    """
+    ordered = sorted(rows, key=lambda t: row_date(t[2]) or datetime.date.min)
+    attributed = {}
+    for h in hits:
+        hd = parse_hdr_date(h.get("date"))
+        if not hd:
+            continue
+        owner = None
+        for cand in ordered:
+            rd = row_date(cand[2])
+            if rd and rd <= hd:
+                owner = cand          # candidates are date-sorted; the last match is the latest
+        if owner is not None:
+            attributed.setdefault(id(owner[2]), []).append(h)
+    return attributed
+
+
 def main():
     ap = argparse.ArgumentParser(description="Reconcile tracked state against mail + LinkedIn.")
     ap.add_argument("--all", action="store_true")
@@ -308,37 +393,14 @@ def main():
     sess = Session(accounts)
     n_done = 0
 
-    # ⭐⭐ THE JOIN KEY IS THE OUTREACH ROW, NEVER THE PERSON — GitHub #2 (public).
-    #
-    # This searched mail PER ROW for the PERSON, then asked "did they reply after this row
-    # was sent?". Whenever one recipient has several outreach rows — the normal case for any
-    # sustained pursuit — a single reply satisfied that test for EVERY row, so a reply
-    # correctly recorded against one row was reported as missing against all its siblings.
-    # One observed weekly run produced 7 findings and 0 real ones.
-    #
-    # The cost is not the noise. This audit is the only mechanism that catches a genuinely
-    # unrecorded reply, and one whose findings are almost all false teaches its reader to
-    # skim — which is exactly when the real one is missed.
-    #
-    # So: group the rows by person, search ONCE per person (fewer round trips too), and
-    # ATTRIBUTE each inbound message to the row it actually answers — the latest row sent on
-    # or before it. A row reports an unrecorded reply only for messages attributed to it.
-    groups = {}
-    for o, idx, r in targets:
-        name, terms = person_terms(r.get("to"))
-        if not terms:
-            continue
-        key = (o.get("id"), name.lower())
-        groups.setdefault(key, {"name": name, "terms": terms, "rows": []})
-        groups[key]["rows"].append((o, idx, r))
+    # ⭐⭐ THE JOIN KEY IS THE PERSON, ACROSS EVERY OPPORTUNITY THAT NAMES THEM — dev #101 /
+    # public #13, the sibling of dev #65 / public #2. See `group_by_contact` and
+    # `attribute_hits` for the mechanism and why the earlier, opportunity-scoped grouping let
+    # the same event satisfy more than one row as long as the rows lived in different
+    # opportunities.
+    groups = group_by_contact(targets)
 
-    def _row_date(r):
-        try:
-            return datetime.date.fromisoformat(r.get("date") or "")
-        except ValueError:
-            return None
-
-    for (_opp_id, _pk), g in groups.items():
+    for g in groups.values():
         name, terms = g["name"], g["terms"]
         q = "in:anywhere (%s)" % " OR ".join(terms)
         hits = sess.search(q)
@@ -346,28 +408,17 @@ def main():
         sys.stderr.flush()
         n_done += 1
 
-        rows = sorted(g["rows"], key=lambda t: (t[2].get("date") or ""))
-        attributed = {}
-        for h in hits:
-            hd = parse_hdr_date(h["date"])
-            if not hd:
-                continue
-            owner = None
-            for cand in rows:
-                rd = _row_date(cand[2])
-                if rd and rd <= hd:
-                    owner = cand          # rows are date-sorted; the last match is the latest
-            if owner is not None:
-                attributed.setdefault(id(owner[2]), []).append(h)
+        rows = sorted(g["rows"], key=lambda t: row_date(t[2]) or datetime.date.min)
+        attributed = attribute_hits(rows, hits)
 
         for o, idx, r in rows:
-            row_date = _row_date(r)
+            rd = row_date(r)
             mine = attributed.get(id(r), [])
             # Medium is a property of how this PERSON is reached, so it is inferred from every
             # message. Reply and acceptance are properties of THIS ROW, so they see only what
             # was attributed to it.
-            medium, _all_replied, _all_accepted = classify(hits, name, row_date)
-            _m, replied, accepted = classify(mine, name, row_date)
+            medium, _all_replied, _all_accepted = classify(hits, name, rd)
+            _m, replied, accepted = classify(mine, name, rd)
 
             # ⚠️ An invitation ACCEPTANCE answers a connection request, not an email or an
             # InMail. Reported against a row of another medium it is noise by construction —

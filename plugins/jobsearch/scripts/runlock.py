@@ -16,13 +16,13 @@ This is the mechanical version. A writer takes the lock, writes, and releases.
 ## ⭐⭐ HOLD IT FOR THE WRITE, NOT FOR THE RUN — the correction of 2026-08-03
 
 The candidate: *"Why can't it run concurrently with the coordinator session? That was the main purpose."*
-**He was right, and the first design defeated its own purpose.**
+**The candidate was right, and the first design defeated its own purpose.**
 
 As originally written, BOTH sides held this lock for their entire lifetime: the daily run took it
 at step 0 and released after the commit (**CLAUDE.md's own note says a run can take 2h15m**), and
 the coordinator took it at session start and held until the candidate released by hand. Two long-held
 exclusive locks cannot overlap, so "runs every 2 hours in the background" was never achievable
-while the candidate was working. **Measured that morning: his coordinator went idle at 07:02 still holding
+while the candidate was working. **Measured that morning: their coordinator went idle at 07:02 still holding
 the lock; at 07:09 it was held 28 minutes, and nothing else could write until the 150-minute
 staleness expiry at ~09:11 — so the 07:00 slot was lost and 09:00 would have been degraded too.**
 
@@ -124,7 +124,7 @@ def main():
 
     # ---- --run: take / execute / release, with the release in a finally ---------------------
     # ⭐ Added 2026-08-03, per the candidate: "shouldn't this happen when you're done with a write?"
-    # He is right, and the manual sequence had already failed twice the same day:
+    # The candidate is right, and the manual sequence had already failed twice the same day:
     #   (1) a coordinator held the lock from 06:41 while idle and cost the 07:00 run;
     #   (2) `--take ... >/dev/null && python3 ...` silently SKIPPED a write when the take was
     #       refused, because the refusal went to /dev/null and && short-circuited.
@@ -157,7 +157,7 @@ def main():
             rc = subprocess.call(cmd)
             if rc != 0:
                 # ⭐ 2026-08-04, per the candidate: "fix the validation for the writes so it's systematic
-                # versus something that's caught by luck." The luck he means: a write failed with
+                # versus something that's caught by luck." The luck meant here: a write failed with
                 # a SyntaxError, but a `;`-chained validate ran anyway against UNCHANGED data and
                 # printed "Clean" directly under the error — a failed write dressed as a passed
                 # one. Structural fix: the wrapper itself declares the failure loudly, and gates

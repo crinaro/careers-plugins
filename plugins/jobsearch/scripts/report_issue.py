@@ -155,18 +155,27 @@ def main():
         print(body)
         return 0
 
-    r = subprocess.run(["gh", "issue", "create", "--repo", repo,
-                        "--title", args.title, "--body", body],
-                       capture_output=True, text=True)
-    if r.returncode != 0:
+    # ⚠️ The except arm is load-bearing, not defensive: subprocess.run raises
+    # FileNotFoundError BEFORE returncode exists when `gh` is not on PATH — which is the
+    # normal state of a cloud or headless surface, exactly the audience the fallback below
+    # was written for. Without it the tool tracebacks and the report body is lost in the
+    # stack trace (dev #89; reproduced 2026-08-14 with gh stripped from PATH).
+    try:
+        r = subprocess.run(["gh", "issue", "create", "--repo", repo,
+                            "--title", args.title, "--body", body],
+                           capture_output=True, text=True)
+        rc, first_err, out = r.returncode, r.stderr.strip().split("\n")[0][:120], r.stdout
+    except FileNotFoundError:
+        rc, first_err, out = 1, "the `gh` CLI is not on this surface", ""
+    if rc != 0:
         # Honest degradation: no gh, or not signed in. The report is still worth something.
         print("Could not file automatically (%s)."
-              % (r.stderr.strip().split("\n")[0][:120] or "gh unavailable"), file=sys.stderr)
+              % (first_err or "gh unavailable"), file=sys.stderr)
         print("Open https://github.com/%s/issues/new and paste:\n" % repo, file=sys.stderr)
         print("%s\n\n%s" % (args.title, body))
         return 1
     print("Filed against %s" % repo)
-    print(r.stdout.strip())
+    print(out.strip())
     return 0
 
 

@@ -42,7 +42,8 @@ def check_profile():
     for f in ("config.json", "user.json"):
         out.append((OK if os.path.exists(os.path.join(ROOT, f)) else BAD, f,
                     "" if os.path.exists(os.path.join(ROOT, f)) else "missing — run init_profile.py --scaffold"))
-    for s in ("opportunities", "companies", "channels", "messages", "inbox", "pending_actions"):
+    for s in ("opportunities", "companies", "channels", "messages", "inbox",
+              "pending_actions", "asks", "commitments"):
         p = os.path.join(ROOT, "data", s + ".jsonl")
         out.append((OK if os.path.exists(p) else BAD, "data/%s.jsonl" % s,
                     "" if os.path.exists(p) else "missing store"))
@@ -214,6 +215,31 @@ def check_credentials():
     return out
 
 
+def check_click_guard():
+    """dev #111: the guard-status line docs/deployment.md promised from doctor/whoami during the
+    #78 audit — built here. REPORT ONLY: a probe result must never gate whether the hook runs
+    (deployment.md's own rule), and nothing here changes the guard's fail-open posture — whether
+    a known-inert guard should refuse instead of warn stays the owner's open decision.
+
+    The verdict comes from guard_status(): recorded observations (the coded guard_status events
+    every SessionStart selftest and click-path diagnosis writes to the diagnostics log) plus the
+    executable parser fixture — never from the guard file merely existing, because a line that
+    says 'live' against an inert guard is worse than no line."""
+    try:
+        import guard_outbound_click as _guard
+        st = _guard.guard_status()
+    except Exception as e:
+        return [(WARN, "outbound-click guard", "status unavailable — %s: %s"
+                 % (type(e).__name__, e))]
+    sev = {"ACTIVE": OK, "UNKNOWN": WARN, "INERT": BAD, "BROKEN": BAD}.get(st["verdict"], WARN)
+    rows = [(sev, "outbound-click guard", st["line"])]
+    if st["verdict"] in ("INERT", "BROKEN"):
+        rows.append((WARN, "what this means",
+                     "clicks are ALLOWED unclassified (fail-open, by design); route the reason "
+                     "above to engine-reporter — only the engine can fix it"))
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description="Is this profile healthy and current with the plugin?")
     ap.add_argument("--fix", action="store_true",
@@ -230,6 +256,8 @@ def main():
                 ("COST — does the schedule match the tier you chose?", check_cost_matches_intent()),
                 ("SCHEDULED RUNS", check_scheduled_tasks()),
                 ("DATA", check_data()),
+                ("OUTBOUND-CLICK GUARD (report only — a probe never gates the hook)",
+                 check_click_guard()),
                 ("CREDENTIALS (yours to place)", check_credentials())]
     bad = warn = 0
     for title, rows in sections:

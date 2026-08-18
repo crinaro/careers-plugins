@@ -3,11 +3,12 @@
 
 GitHub #43. The decision surface carries two kinds of item. Derived ones — role decisions
 from `opportunities.jsonl`, relationship follow-ups from `channels.jsonl` — cannot go stale,
-because they are filters over records and vanish when the record changes. Whatever remains
-hand-authored in `focus.md` can assert a state the store already contradicts, and nothing
-compared the two: the schema validator checks structure, the section checker checks phrasing
-and duplication, and the mailbox reconciliation touches the communications store but never
-the prose. So a resolved ask sat listed as pending until a human happened to notice.
+because they are filters over records and vanish when the record changes. The cross-cutting
+asks (`data/asks.jsonl` since dev #93; focus.md prose before that) have hand-authored TEXT
+that can assert a state the store already contradicts, and nothing compared the two: the
+schema validator checks structure, the section checker checks phrasing and duplication, and
+the mailbox reconciliation touches the communications store but never the ask text. So a
+resolved ask sat listed as pending until a human happened to notice.
 
 ⭐ THIS IS THE BACKSTOP, NOT THE PRIMARY CONTROL. #44 removes the drift class for items that
 are derivable at all; this catches what is left, which should be only genuinely unmodelled
@@ -53,19 +54,15 @@ def rows(rel):
 
 
 def hand_authored_items():
-    """The `## Your Move` items still typed by hand in focus.md.
+    """The OPEN rows of data/asks.jsonl — the asks whose TEXT is still authored by a human.
 
-    Parsed with generate_dashboard's own parser so the two can never disagree about what
-    counts as an item — a second parser here would drift from the surface it audits."""
-    try:
-        import generate_dashboard as gd
-    except ImportError:
-        return []
-    try:
-        with open(os.path.join(ROOT, "focus.md"), encoding="utf-8") as fh:
-            return gd.parse_your_move(fh.read()) or []
-    except (OSError, AttributeError):
-        return []
+    (Until dev #93 this parsed focus.md's `## ⚡ Your Move` section; the asks are a store
+    now, but a store row's prose can still claim what the record contradicts, so the
+    backstop reads the same rows the dashboard renders.) Membership is `your_move.
+    open_asks`'s, never re-derived here. Returns (title, ask, opp_id) tuples — the shape
+    the flagging loop below has always consumed."""
+    return [(a.get("title") or a.get("id") or "?", a.get("ask") or "", a.get("opp_id"))
+            for a in _ym.open_asks(list(rows("asks.jsonl")))]
 
 
 def known_entities():
@@ -87,8 +84,14 @@ def known_entities():
     # ⭐ `last_touch` was removed from the channel schema (GitHub #79) — nothing ever wrote it
     # mechanically, so this read was already dead in practice, and it would now be reading a
     # rejected key besides. `your_move.derive_channel_last_touch` is the correct source: the
-    # max of an outbound message joined by contact_id and the latest log[] entry. Minimal fix
-    # to keep this file correct; the full rewrite of this check belongs to a separate issue.
+    # max of an outbound message joined by contact_id and the latest log[] entry.
+    #
+    # dev #82 (2026-08-14): the 0.24.0 fix below was landed with no test on the CONTACTS
+    # branch specifically — every existing regression case named the channel's own label, so
+    # the per-contact `note()` call two lines down had never been exercised. Verified by
+    # fail-on-purpose (reverting it to the old dead `c.get("last_touch")` read turns
+    # TestCheckActionClaimsDerivesTheTouch red): the derivation itself was already correct,
+    # it only lacked coverage. No further rewrite is needed here.
     _channel_rows = list(rows("channels.jsonl"))
     _message_rows = list(rows("messages.jsonl"))
     for c in _channel_rows:
@@ -122,12 +125,12 @@ TERMINAL = {"passed", "expired"}
 def closed_roles_named_in_prose():
     """Roles the RECORD has closed that the hand-written narrative still discusses — #60.
 
-    ⭐ THE PROSE IS NOT THE GENERATED HALF. focus.md's own header already says role state is
-    generated from the JSONL, and that rule governs the generated sections. The Session
-    Handoff and carried-context blocks are maintained by hand, restate the same role facts,
-    and nothing reconciled them — so a coordinator startup reported two roles as open
-    decisions awaiting the operator when the pipeline had recorded one `passed`/`closed`
-    two days earlier and the other applied the day before.
+    The surviving hand-written narrative is `handoff.md`, the session-handoff letter (until
+    dev #93 it was a focus.md section, alongside generated content this check had to strip
+    first; the store cutover removed the generated half entirely, so the whole file is
+    hand-authored now and is read as-is). The incident this catches: a coordinator startup
+    reported two roles as open decisions awaiting the operator when the pipeline had
+    recorded one `passed`/`closed` two days earlier and the other applied the day before.
 
     ⚠️ Note what was NOT wrong in that incident: the dashboard. The generated surface
     filtered the closed role out correctly. Only the narrative drifted — which is the
@@ -137,17 +140,10 @@ def closed_roles_named_in_prose():
     legitimate thing to still be writing about; one recorded `passed` or `expired` is not.
     """
     try:
-        with open(os.path.join(ROOT, "focus.md"), encoding="utf-8") as fh:
+        with open(os.path.join(ROOT, "handoff.md"), encoding="utf-8") as fh:
             prose = fh.read()
     except OSError:
         return []
-    # The generated sections are rebuilt every run and cannot drift; only the hand-written
-    # narrative is in question, so strip what the generator owns before matching.
-    import generate_dashboard as gd                       # noqa: PLC0415
-    try:
-        prose = gd.strip_your_move(prose)
-    except Exception:                                     # noqa: BLE001
-        pass
 
     companies = {}
     for c in rows("companies.jsonl"):
@@ -176,12 +172,12 @@ def main():
     print("=" * 78)
     items = hand_authored_items()
     ent = known_entities()
-    print("  hand-authored Your Move item(s): %d   ·   entities the store knows: %d"
+    print("  open ask(s) with hand-authored text: %d   ·   entities the store knows: %d"
           % (len(items), len(ent)))
 
     if not items:
-        print("\n  Nothing hand-authored on Your Move — every item is derived from a record")
-        print("  and cannot drift. That is the #44 end state, not an empty check.")
+        print("\n  No open asks in data/asks.jsonl — every Your Move item is derived from a")
+        print("  record and cannot drift. That is the #44 end state, not an empty check.")
         return 0
     if not ent:
         # ⚠️ NOT A CLEAN RESULT. No entities means nothing could have been compared, which is
@@ -192,7 +188,7 @@ def main():
 
     flagged = []
     for item in items:
-        # parse_your_move yields (title, ask, opp_id); opp_id is the optional {opp:<id>} tag.
+        # hand_authored_items yields (title, ask, opp_id) from the open rows of asks.jsonl.
         title, ask = item[0], item[1]
         text = "%s %s" % (title, ask)
         deadline = max(DATE_RE.findall(text) or [""])
@@ -226,9 +222,9 @@ def main():
         print("    · %s" % title[:66])
         print("        %s was last contacted %s (%s)%s"
               % (name, when, why, (", after this ask's %s" % deadline) if deadline else ""))
-    print("\n  If the action already happened, the item belongs in the record, not in prose —")
-    print("  a channel's next_touch or an opportunity's next_action surfaces on Your Move by")
-    print("  itself and leaves it by itself. See GitHub #44.")
+    print("\n  If the action already happened, resolve the ask (resolved_on + resolution) or")
+    print("  move it onto the record — a channel's next_touch or an opportunity's next_action")
+    print("  surfaces on Your Move by itself and leaves it by itself. See GitHub #44.")
     return 0
 
 

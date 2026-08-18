@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Generate dashboard.html from the tracker markdown files.
+"""Generate dashboard.html from the operating store.
 
-Deterministic, zero-token rendering: the model only maintains the .md files
-(especially focus.md); this script assembles the dashboard HTML.
+Deterministic, zero-token rendering: the model maintains data/*.jsonl (and the few
+human-facing .md artifacts — drafts, cover letters, network); this script assembles the
+dashboard HTML. Since dev #93 focus.md is not read at all: Your Move and This Week are
+views of data/asks.jsonl, data/commitments.jsonl, opportunities.jsonl and channels.jsonl.
 
 Usage: python3 scripts/generate_dashboard.py   (run from the profile folder root)
 Output: dashboard.html in the folder root.
@@ -18,6 +20,9 @@ _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _root import profile_root as _profile_root
 import profile as _profile
 import your_move as _ym
+# The one definition of the play sequence — validate_data.py owns the enum; consumers
+# import it rather than restating it (a sequence typed twice disagrees with itself later).
+from validate_data import PLAY_SEQUENCE as _PLAY_SEQUENCE
 
 # ⚠️ .absolute(), NOT .resolve() — 2026-08-05. `.resolve()` FOLLOWS SYMLINKS, and the tracker
 # consumes this engine as a submodule with `scripts -> engine/scripts`. Resolving made ROOT
@@ -187,42 +192,10 @@ def render_table(headers, rows, status_cols=(), comp_col=None, link_col=None) ->
     return "".join(out)
 
 
-YOUR_MOVE_RE = r"^##\s*(?:⚡\s*)?Your Move.*?$(.*?)(?=^##\s|\Z)"
-
-
-def parse_your_move(md: str):
-    """Extract the '## Your Move' section's numbered items as (title, ask, opp_id) tuples.
-
-    (Said "(title, ask)" until 2026-08-13; the third element arrived with the {opp:<id>}
-    tag below and the docstring was never updated. A caller trusting it unpacked two and
-    crashed — check_action_claims.py, GitHub #43.)
-
-    This section is what's actually waiting on the candidate — it renders as its own panel at
-    the top of the dashboard so priority decisions aren't buried in the focus prose."""
-    m = re.search(YOUR_MOVE_RE, md, re.M | re.S)
-    if not m:
-        return []
-    items = []
-    for line in m.group(1).splitlines():
-        im = re.match(r"^\d+\.\s+\*\*(.+?)\*\*\s*[—-]?\s*(.*)$", line)
-        if im:
-            title, ask = im.group(1), im.group(2)
-            # Optional trailing tag {opp:<id>} links a role decision to its JSONL
-            # record so the generator can surface that role's JD link WITHOUT the URL
-            # being duplicated into focus.md (single source of truth = the JSONL).
-            opp_id = None
-            tagm = re.search(r"\s*\{opp:\s*([a-z0-9-]+)\s*\}\s*$", ask)
-            if tagm:
-                opp_id = tagm.group(1)
-                ask = ask[:tagm.start()].rstrip()
-            items.append((title, ask, opp_id))
-    return items
-
-
-def strip_your_move(md: str) -> str:
-    """Remove the Your Move section so it doesn't render twice (panel + focus list)."""
-    return re.sub(YOUR_MOVE_RE, "", md, flags=re.M | re.S)
-
+# `parse_your_move`, `strip_your_move` and the `## ⚡ Your Move` regex lived here until
+# 2026-08-18 (dev #93). The hand-authored tail of Your Move is data now (`data/asks.jsonl`),
+# so there is no prose section left to parse: `asks_from_jsonl()` below is the replacement,
+# and check_action_claims.py reads the same store instead of re-parsing this file's output.
 
 
 # `render_fit()` lived here until 2026-08-13 and was NEVER CALLED. It rendered exactly the
@@ -388,11 +361,24 @@ def _touch_detail(o):
     return "".join(out)
 
 
+# The fixed shape of render_opportunity_list's counts dict — see dev #80 in that function's
+# docstring for why this has to be a single shared constant rather than two literals.
+_EMPTY_OPP_COUNTS = {"all": 0, "you": 0, "applied": 0, "person": 0, "nothing": 0}
+
+
 def render_opportunity_list(opps, companies):
-    """One row per LIVE role. Closed roles are not here — they are not opportunities."""
+    """One row per LIVE role. Closed roles are not here — they are not opportunities.
+
+    ⭐ dev #80 — the counts dict has a FIXED shape (all/you/applied/person/nothing) because
+    main() indexes every key unconditionally to build the filter bar. The empty-live case used
+    to return `{}` for it, which crashed main() with a KeyError — and the profile most likely to
+    have zero live opportunities is a brand-new one, so the dashboard's first-ever render was the
+    crash. `_EMPTY_OPP_COUNTS` is the one place that shape is written down, shared by both the
+    empty-case return and the populated-case starting value, so they cannot drift apart.
+    """
     live = [o for o in opps if o.get("status") not in _CLOSED_STATUSES]
     if not live:
-        return '<div class="sub">No live opportunities.</div>', {}
+        return '<div class="sub">No live opportunities.</div>', dict(_EMPTY_OPP_COUNTS)
     order = {"active-pursuit": 0, "needs-resolution": 1, "in-motion": 2, "backlog": 3}
 
     def key(o):
@@ -401,7 +387,7 @@ def render_opportunity_list(opps, companies):
         return (waiting, order.get(o.get("status"), 9),
                 -(STAGES.index(o["stage"]) if o.get("stage") in STAGES else -1))
 
-    counts = {"all": 0, "you": 0, "applied": 0, "person": 0, "nothing": 0}
+    counts = dict(_EMPTY_OPP_COUNTS)
     rows = []
     for o in sorted(live, key=key):
         comp = companies.get(o.get("company_id"), {})
@@ -413,9 +399,20 @@ def render_opportunity_list(opps, companies):
         if waits:
             counts["you"] += 1
 
+        # The play position, on the row itself — the field's first dashboard reader (dev #95
+        # follow-on: the schema gained play_stage and no surface the owner meets displayed it).
+        _play = str(o.get("play_stage") or "")
+        if _play == "unresolved":
+            play_html = ('<span class="play-unres">play: unresolved — set the real '
+                         'stage</span>')
+        elif _play:
+            play_html = esc("play: " + _play)
+        else:
+            play_html = ""
         meta = " · ".join(x for x in (
             _fmt_loc(o.get("location")), _fmt_comp(o.get("comp")),
-            esc(str(o.get("channel_id") or "").replace("firm:", "via ")) or "") if x)
+            esc(str(o.get("channel_id") or "").replace("firm:", "via ")) or "",
+            play_html) if x)
         na = o.get("next_action")
         action_full = ""
         if na:
@@ -492,20 +489,9 @@ def render_your_move(items, links=None) -> str:
     return "".join(parts)
 
 
-def parse_focus(md: str):
-    """Return a list of ('h', heading_text) and ('i', title, why) tuples, in document order."""
-    entries = []
-    for line in md.splitlines():
-        hm = re.match(r"^##\s+(.+?)\s*$", line)
-        if hm:
-            entries.append(("h", hm.group(1)))
-            continue
-        im = re.match(r"^\d+\.\s+\*\*(.+?)\*\*\s*[—-]?\s*(.*)$", line)
-        if im:
-            entries.append(("i", im.group(1), im.group(2)))
-    return entries
-
-
+# `parse_focus` is gone with focus.md (dev #93). render_focus stays: it renders the same
+# ('h', heading) / ('i', title, why) entry tuples, which the JSONL-backed builders below now
+# construct directly instead of parsing them out of hand-written markdown.
 def render_focus(entries, show_headers: bool = True) -> str:
     """Render parsed focus entries to HTML. Buffers '## ' headers and only emits one
     once a real numbered item follows it, so a header with nothing under it (e.g.
@@ -705,6 +691,115 @@ def render_draft_entries(entries, empty_msg):
     return "".join(out)
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# KNOWLEDGE ARTIFACTS — GitHub #94 (public #20).
+#
+# Drafts and cover letters render in full, but the two DURABLE knowledge artifact types —
+# kb/<company_id>.md and call_preps/call_prep_<date>.md — rendered only as code-formatted
+# filename strings (md_inline's fileref chip), unreadable from the published page. The
+# reported concrete failure: a call prep for an interview the next morning, readable only
+# from a checkout. These render the files' CONTENT, collapsed behind their titles.
+#
+# ⚠️ Same standing trap as the draft parsers: a file that renders NOTHING must be loud.
+# An empty body on the page is indistinguishable from "not written yet" — that shipped once
+# for a cover letter and only the owner noticed. Empty or unreadable files print the same
+# `!! WARNING` the draft parsers do, AND leave a visible marker on the page itself.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def knowledge_docs():
+    """([(title, relpath, body)] for call_preps newest-first, same for kb/ alphabetical).
+
+    Skips knowledge.py's KB_EXEMPT names (a README is documentation about the store, not a
+    knowledge artifact). Title is the file's first '# ' heading, else the filename stem —
+    the stem is the company id / date key, which is exactly what a reader scans for."""
+    import knowledge as _kn
+
+    def _docs(sub, newest_first):
+        d = ROOT / sub
+        if not d.is_dir():
+            return []
+        out = []
+        names = sorted((n for n in os.listdir(d)
+                        if n.endswith(".md") and n.lower() not in _kn.KB_EXEMPT),
+                       reverse=newest_first)
+        for name in names:
+            rel = "%s/%s" % (sub, name)
+            try:
+                body = (d / name).read_text(encoding="utf-8")
+            except OSError as e:
+                print("  !! WARNING: knowledge file '%s' is UNREADABLE (%s) -- it renders as "
+                      "a heading with NO content." % (rel, e))
+                body = ""
+            if not body.strip():
+                print("  !! WARNING: knowledge file '%s' has NO content -- it renders as a "
+                      "heading with nothing under it, indistinguishable from 'not written "
+                      "yet'." % rel)
+            m = re.search(r"^#\s+(.+?)\s*$", body, re.M)
+            title = m.group(1) if m else name[:-3]
+            out.append((title, rel, body))
+        return out
+    return _docs("call_preps", True), _docs("kb", False)
+
+
+def render_md_doc(md: str) -> str:
+    """A small block-level markdown renderer for knowledge files: headings, bullets,
+    blockquotes, rules, paragraphs — inline formatting via md_inline (which escapes).
+    Deliberately modest: kb files are working notes, and a faithful readable rendering
+    beats a full markdown engine this repo would then have to carry dependency-free."""
+    out, para, items = [], [], []
+
+    def flush_para():
+        if para:
+            out.append('<p class="kd-p">%s</p>' % "<br>".join(md_inline(l) for l in para))
+            del para[:]
+
+    def flush_list():
+        if items:
+            out.append('<ul class="kd-l">%s</ul>'
+                       % "".join("<li>%s</li>" % md_inline(i) for i in items))
+            del items[:]
+
+    for raw in md.splitlines():
+        s = raw.strip()
+        hm = re.match(r"^(#{1,4})\s+(.*)$", s)
+        if hm:
+            flush_para(); flush_list()
+            out.append('<div class="kd-h kd-h%d">%s</div>'
+                       % (len(hm.group(1)), md_inline(hm.group(2))))
+        elif s.startswith(("- ", "* ")):
+            flush_para()
+            items.append(s[2:])
+        elif s.startswith(">"):
+            flush_para(); flush_list()
+            out.append('<div class="kd-q">%s</div>' % md_inline(s.lstrip(">").strip()))
+        elif s in ("---", "***", "___"):
+            flush_para(); flush_list()
+            out.append('<hr class="draft-rule">')
+        elif not s:
+            flush_para(); flush_list()
+        else:
+            flush_list()
+            para.append(s)
+    flush_para(); flush_list()
+    return "".join(out)
+
+
+def render_knowledge_docs(docs, empty_msg):
+    """Each file collapsed behind its title (the reporter's own suggested shape). The body
+    is the rendered CONTENT — never just the filename."""
+    if not docs:
+        return '<div class="sub">%s</div>' % empty_msg
+    out = []
+    for title, rel, body in docs:
+        inner = render_md_doc(body) or ('<div class="sub">⚠️ This file is empty — nothing '
+                                        'has been written here yet.</div>')
+        out.append('<details class="kdoc"><summary><strong>%s</strong> '
+                   '<code class="fileref">%s</code></summary>'
+                   '<div class="kdoc-body">%s</div></details>'
+                   % (md_inline(title), esc(rel), inner))
+    return "".join(out)
+
+
 def load_jsonl(name):
     import json as _json
     path = ROOT / "data" / name
@@ -831,7 +926,7 @@ def application_tables(today=None):
             continue
         contacts = len(o.get("outreach") or [])
         # `in-motion` is defined in CLAUDE.md as a recruiter/network thread — the
-        # recruiter approached the candidate, so there is no outreach[] row from his side and
+        # recruiter approached the candidate, so there is no outreach[] row from their side and
         # its absence is NOT evidence that nothing is happening.
         if contacts or o.get("status") == "in-motion" or o.get("stage") in ("screening", "interviewing", "offer"):
             who = ", ".join(x.get("to", "") for x in (o.get("outreach") or []) if x.get("to")) or "in process"
@@ -845,47 +940,58 @@ def application_tables(today=None):
     return submitted, human, nothing
 
 
-def opp_focus_from_jsonl():
-    """Generate the Opportunities-tab focus groups (Active Pursuit / Needs Resolution /
-    In Motion) FROM data/opportunities.jsonl, so they can never drift from the data
-    (cutover 2026-07-20 — focus.md's hand-maintained role sections were going stale:
-    passed roles lingering, decided roles still showing as 'needs a decision')."""
-    companies = {c["id"]: c for c in load_jsonl("companies.jsonl")}
-    opps = load_jsonl("opportunities.jsonl")
-    groups = [
-        ("🎯 Active pursuits — what's next on each", "active-pursuit"),
-        ("❓ Needs resolution — a pursue/pass call", "needs-resolution"),
-        ("🔄 In motion — threads to watch", "in-motion"),
-    ]
-    parts = []
-    for label, status in groups:
-        rows = [o for o in opps if o.get("status") == status]
-        if not rows:
-            continue
-        parts.append('<div class="focus-section">%s (%d)</div>' % (label, len(rows)))
-        for o in sorted(rows, key=lambda o: o.get("company_id", "")):
-            comp = companies.get(o.get("company_id"), {})
-            title = "%s — %s" % (comp.get("name", o.get("company_id", "")), o.get("title", ""))
-            bits = []
-            c = o.get("comp")
-            if c:
-                bits.append(_fmt_comp(c))
-            loc = _fmt_loc(o.get("location"))
-            if loc:
-                bits.append(loc)
-            na = o.get("next_action")
-            if na:
-                who = "you" if o.get("next_action_owner") == OWNER_TOKEN else "me"
-                bits.append("<strong>Next (%s):</strong> %s" % (who, na))
-            jd = o.get("jd_url")
-            if jd:
-                bits.append('<a href="%s" target="_blank" rel="noopener noreferrer">JD ↗</a>' % jd)
-            why = " · ".join(bits)
-            parts.append(
-                '<div class="focus-item"><div class="focus-num">•</div><div>'
-                '<div class="focus-title">%s</div><div class="focus-why">%s</div></div></div>'
-                % (md_inline(title), why))
-    return "".join(parts)
+# `opp_focus_from_jsonl()` lived here until 2026-08-18 and was NEVER CALLED — the 2026-08-10
+# one-list cutover (`render_opportunity_list`) replaced the focus-group view it rendered, and
+# the function survived looking load-bearing, the same defect that kept `render_fit()` alive
+# (GitHub #5). Removed with the focus.md cutover (dev #93).
+
+
+def asks_from_jsonl(kind):
+    """The hand-authored asks, read from data/asks.jsonl — dev #93 (public #21).
+
+    ⭐ THE LAST HAND-AUTHORED SURFACE IS NOW A STORE. Role decisions and channel follow-ups
+    were already filters over records; the cross-cutting tail was still typed into focus.md,
+    which is exactly where a hand-written copy of a record went stale beside its auto-rendered
+    row (the reporter's verified failure). An ask is a ROW now: it appears while
+    `resolved_on` is unset and leaves every view the moment it is set — expulsion is
+    structural, not an editing habit. Membership is `your_move.open_asks`'s, never re-derived
+    here (the #79 rule).
+
+    kind="role" returns render_your_move's (title, ask, opp_id) tuples for the Your Move
+    queue; kind="system" the same shape for the System & tooling group."""
+    items = []
+    for a in _ym.open_asks(load_jsonl("asks.jsonl"), kind=kind):
+        ask = a.get("ask") or ""
+        if a.get("act_by"):
+            ask = ("%s (act by %s)" % (ask, a["act_by"])).strip()
+        items.append((a.get("title") or a.get("id") or "?", ask, a.get("opp_id")))
+    return items
+
+
+def this_week_from_jsonl(today=None):
+    """The This Week tab, read from data/commitments.jsonl — dev #93.
+
+    Renders every commitment dated today or later, soonest first, plus — LOUDLY — any row
+    whose date is the literal `unresolved` (the migration marker for a commitment whose date
+    could not be parsed; an unreadable date is an unknown, never a pass). Past rows stay in
+    the store as history and simply age out of this view; nothing expels them by hand.
+
+    Returns render_focus's ('i', title, why) entries."""
+    today = today or datetime.date.today().isoformat()
+    rows = load_jsonl("commitments.jsonl")
+    entries = []
+    for c in sorted((r for r in rows if str(r.get("date")) >= today
+                     and str(r.get("date")) != "unresolved"),
+                    key=lambda r: (str(r.get("date")), str(r.get("time") or ""))):
+        bits = [b for b in (c.get("date"), c.get("time"), c.get("who"), c.get("note")) if b]
+        entries.append(("i", c.get("title") or c.get("id") or "?",
+                        " · ".join(str(b) for b in bits)))
+    for c in rows:
+        if str(c.get("date")) == "unresolved":
+            entries.append(("i", "⚠️ %s" % (c.get("title") or c.get("id") or "?"),
+                            "Date is the migration marker `unresolved` — verify the real "
+                            "date (invite `.ics`, never recall) and set it on the record."))
+    return entries
 
 
 def _role_title(o, companies, mark="🎯"):
@@ -906,7 +1012,7 @@ def your_move_roles_from_jsonl():
     candidate's own next_action_owner token (see profile.owner_token()) while still live
     surfaces here automatically, with its
     comp / location / lean / JD link sourced straight from the record. To move a role on
-    or off Your Move, change its next_action_owner in the JSONL — never edit focus.md.
+    or off Your Move, change its next_action_owner in the JSONL — never a hand-typed list.
 
     ⭐ GitHub #79 — ownership alone is no longer the filter. `your_move.py` is the single
     owner of role-group membership (unresolved / waiting / scheduled / now); this renders
@@ -976,18 +1082,20 @@ def your_move_channels_from_jsonl():
 
 
 def your_move_callouts():
-    """GitHub #79 — the three states that must NEVER render inside the primary "needs you"
+    """GitHub #79 — the states that must NEVER render inside the primary "needs you"
     queue, but must not vanish silently either: an unresolved/unreadable `blocked_until`, a
-    role still waiting on the other side, and a channel plan a touch already fulfilled but
-    nobody has cleared. Each is its own loud callout — see render_your_move_callouts().
+    role still waiting on the other side, a channel plan a touch already fulfilled but
+    nobody has cleared — and (dev #95 follow-on) a `play_stage` still carrying the
+    migration marker `unresolved`. Each is its own loud callout — see
+    render_your_move_callouts().
 
-    Returns (unresolved, waiting, fulfilled), each a list of render_your_move's
-    (title, ask, opp_id) tuples.
+    Returns (unresolved, waiting, fulfilled, play_unresolved), each a list of
+    render_your_move's (title, ask, opp_id) tuples.
     """
     companies = {c["id"]: c for c in load_jsonl("companies.jsonl")}
+    all_opps = load_jsonl("opportunities.jsonl")
     unresolved, waiting = [], []
-    for o, state, why in _ym.classify_opportunities(load_jsonl("opportunities.jsonl"),
-                                                     OWNER_TOKEN):
+    for o, state, why in _ym.classify_opportunities(all_opps, OWNER_TOKEN):
         if state == "unresolved":
             unresolved.append((_role_title(o, companies, "🚧"), why, o.get("id"),
                                o.get("next_action_date") or "9999"))
@@ -1010,12 +1118,22 @@ def your_move_callouts():
         fulfilled.append(("✅ %s" % label, ask, None, str(touch or "")))
     fulfilled.sort(key=lambda t: t[3])
 
+    # dev #95 follow-on — membership is your_move.py's, never re-derived here. The ask is an
+    # imperative aimed at the owner (check_sections.py's own rule for Your Move lines).
+    play = []
+    for o in _ym.unresolved_play_stages(all_opps):
+        ask = ("The play position is the migration marker, not a real value — replace it: "
+               "`record.py set %s play_stage <stage>` (sequence: %s)."
+               % (o.get("id") or "?", " → ".join(_PLAY_SEQUENCE)))
+        play.append((_role_title(o, companies, "🎬"), ask, o.get("id")))
+
     return ([(t, a, oid) for (t, a, oid, _d) in unresolved],
             [(t, a, oid) for (t, a, oid, _d) in waiting],
-            [(t, a, oid) for (t, a, oid, _d) in fulfilled])
+            [(t, a, oid) for (t, a, oid, _d) in fulfilled],
+            play)
 
 
-def render_your_move_callouts(unresolved, waiting, fulfilled, links=None):
+def render_your_move_callouts(unresolved, waiting, fulfilled, play_unresolved, links=None):
     """Loud, non-"needs you" callouts for Your Move — GitHub #79. None of these three groups
     render inside render_your_move's primary list; they exist so an unresolved precondition,
     a still-pending one, or an uncleared fulfilled plan is visible rather than silently
@@ -1044,6 +1162,16 @@ def render_your_move_callouts(unresolved, waiting, fulfilled, links=None):
             '<div class="sub" style="margin:-6px 0 10px">A touch landed on or after the '
             'planned date. Clear <code>next_touch</code> or author the next one.</div>'
             '<div class="card">%s</div>' % (len(fulfilled), render_your_move(fulfilled, links)))
+    if play_unresolved:
+        parts.append(
+            '<h2 style="font-size:16px;margin-top:22px">🎬 Play position unresolved — set the '
+            'real stage <span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">The migration found a numbered play '
+            'marker in prose but could not name the stage, so it wrote the literal '
+            '<code>unresolved</code>. The prose survives on the role; only a human can name '
+            'the position.</div>'
+            '<div class="card">%s</div>'
+            % (len(play_unresolved), render_your_move(play_unresolved, links)))
     return "".join(parts)
 
 
@@ -1053,55 +1181,28 @@ def main():
     # local variable was never used again. It kept a retired 166 KB file looking load-bearing,
     # which is exactly why three agents were still being pointed at it. Removed with the file.
     net = read("network.md")
-    focus_raw = read("focus.md")
     drafts = parse_drafts(read("drafts.md"))
     # Cover letters are a distinct artifact from outreach drafts (added 2026-07-21,
     # per the candidate: the "why is this job a great fit" message was missing entirely).
     # Same file shape, so parse_drafts handles it; rendered in its own panel.
     covers = [c for c in parse_cover_letters(read("cover_letters.md"))]
 
-    # Split focus.md into two dashboard sections, per the candidate's request (2026-07-14):
-    # opportunity-facing content (Active Pursuit, Needs Resolution, In Motion, Other
-    # open items) vs. process/agent-improvement content (the Search Process section).
-    # Mixing "should I pursue this job" with "here's a bug I fixed" in one card was
-    # exactly the clutter this split is meant to fix.
-    # Process sections are now OWNERSHIP-TAGGED (2026-07-20, per the candidate: "what i care
-    # about are the items you need my input on"). focus.md carries three of them —
-    # "Needs the candidate", "Open (mine to fix)", "Recently resolved" — and the dashboard
-    # renders them as three distinct groups instead of one undifferentiated wall.
-    # This is the data-model half of the tabs change: a flat append-only list can't
-    # be segmented by any view, because the data carries no ownership or status.
-    # `## Search Process` is still matched so older/archived content still renders.
-    process_groups = []          # list of (label, raw_text)
-    opportunity_focus_raw = focus_raw
-    for pat, label in ((r"^## ⚙️ Process — ⚡ Needs .*?$", "needs"),
-                       (r"^## ⚙️ Process — 🔧 Open.*?$", "open"),
-                       (r"^## ⚙️ Process — ✅ Recently resolved.*?$", "done"),
-                       (r"^## Search Process.*?$", "legacy")):
-        mm = re.search(r"(" + pat + r"(?:.*?))(?=^## |\Z)", opportunity_focus_raw, re.M | re.S)
-        if mm:
-            process_groups.append((label, mm.group(1)))
-            opportunity_focus_raw = (opportunity_focus_raw[:mm.start()]
-                                     + opportunity_focus_raw[mm.end():])
-    process_raw = "\n".join(t for _, t in process_groups)
-
-    # "This Week" is pulled out the same way (added 2026-07-20, per the candidate: the dashboard
-    # was overloading job-search content with process content and near-term commitments
-    # had nowhere to live). Its own tab, so imminent calls aren't buried.
-    tw_match = re.search(r"(^## 📅 This Week.*?)(?=^## |\Z)", opportunity_focus_raw, re.M | re.S)
-    if tw_match:
-        thisweek_raw = tw_match.group(1)
-        opportunity_focus_raw = (opportunity_focus_raw[:tw_match.start()]
-                                 + opportunity_focus_raw[tw_match.end():])
-    else:
-        thisweek_raw = ""
-
-    your_move = parse_your_move(focus_raw)
-    opportunity_focus_raw = strip_your_move(opportunity_focus_raw)
-    focus = parse_focus(opportunity_focus_raw)
-    process_focus = parse_focus(process_raw)
-    process_parsed = [(lab, parse_focus(txt)) for lab, txt in process_groups]
-    thisweek_focus = parse_focus(thisweek_raw)
+    # ⭐⭐ focus.md IS RETIRED AS A SOURCE OF STATE — dev #93 (public #21), the owner's call:
+    # "Keep the tabs and remove the use of focus.md, use the data in the json files."
+    #
+    # Both tabs stay; what changed is where their content lives. The verified failure behind
+    # this: a record was hand-copied into the action-needed list as a numbered focus.md item,
+    # duplicating its auto-rendered row, and the hand-written copy went stale — still claiming
+    # action was needed after it was not. Two DERIVED views of one record cannot disagree, so
+    # every surface below now reads a store:
+    #   Your Move hand tail            -> data/asks.jsonl  kind=role   (asks_from_jsonl)
+    #   System & tooling ("Needs …")   -> data/asks.jsonl  kind=system
+    #   This Week                      -> data/commitments.jsonl       (this_week_from_jsonl)
+    #   the session-handoff letter     -> handoff.md — narrative for the next session, not
+    #                                     pipeline state, and never rendered here.
+    your_move = asks_from_jsonl("role")
+    system_asks = asks_from_jsonl("system")
+    thisweek_focus = this_week_from_jsonl()
 
     # SOURCED PIPELINE — now read from data/*.jsonl (cutover 2026-07-20). The old
     # markdown-table parse is retired; opportunities.md's main table is superseded.
@@ -1132,41 +1233,39 @@ def main():
 
     ym_links = {o["id"]: best_link(o) for o in load_jsonl("opportunities.jsonl")}
     # Your Move, in order: role decisions derived from opportunities.jsonl, then relationship
-    # follow-ups derived from channels.jsonl (GitHub #44), then whatever cross-cutting asks
-    # remain hand-authored in focus.md.
+    # follow-ups derived from channels.jsonl (GitHub #44), then the cross-cutting asks from
+    # data/asks.jsonl (dev #93 — the tail that used to be hand-typed prose in focus.md).
     #
-    # ⭐ THE HAND-AUTHORED TAIL IS NOW THE EXCEPTION, NOT HALF THE SURFACE. Every item in the
-    # first two groups is incapable of going stale: it is a filter over a record, so it
-    # disappears when the record changes. What is left in focus.md should be only asks that
-    # are genuinely unmodelled anywhere — and those remain a standing drift risk, which is
-    # what check_action_claims.py (#43) exists to catch as a backstop.
+    # The first two groups are filters over records and cannot go stale. The asks are rows
+    # now, so they leave the moment `resolved_on` is set — but their TEXT is still authored
+    # by hand and can still claim what the store contradicts, which is why
+    # check_action_claims.py (#43) reads the same store as its backstop.
     role_decisions = your_move_roles_from_jsonl()
     channel_touches = your_move_channels_from_jsonl()
     your_move = role_decisions + channel_touches + your_move
     your_move_html = render_your_move(your_move, ym_links)
-    # GitHub #79 — group membership is your_move.py's alone; these three states must never
+    # GitHub #79 — group membership is your_move.py's alone; these states must never
     # land inside your_move_html above, but must not vanish silently either.
-    _unresolved_rows, _waiting_rows, _fulfilled_rows = your_move_callouts()
+    _unresolved_rows, _waiting_rows, _fulfilled_rows, _play_rows = your_move_callouts()
     your_move_callouts_html = render_your_move_callouts(_unresolved_rows, _waiting_rows,
-                                                         _fulfilled_rows, ym_links)
+                                                         _fulfilled_rows, _play_rows,
+                                                         ym_links)
     thisweek_html = render_focus(thisweek_focus)
 
     # ⭐ THE PROCESS TAB WAS REMOVED 2026-08-06 — engine work is not a local to-do list.
     #
-    # It showed "🔧 Open — mine to fix": engine and tooling items the search had noticed and was
-    # carrying in `focus.md`. Those now belong to the plugin that owns the engine, and are filed
-    # as GitHub issues via `careers-plugins/scripts/intake.py`. A capability's defects belong on
-    # that capability's tracker, not duplicated in every profile that uses it — a local copy is a
-    # second place to look and the one that goes stale.
+    # It showed "🔧 Open — mine to fix": engine and tooling items the search had noticed. Those
+    # belong to the plugin that owns the engine, and are filed as GitHub issues via
+    # `careers-plugins/scripts/intake.py`. A capability's defects belong on that capability's
+    # tracker, not duplicated in every profile that uses it.
     #
-    # Only the "Needs the candidate" group is still rendered, and it was never on that tab anyway: it
-    # appears on Your Move as the "System & tooling" group, because it is a DECISION the owner has
-    # to make about his own setup — a credential, a cadence — which no issue on the engine repo
-    # can resolve for him. That distinction is the whole reason the split survives the removal.
-    _pmap = dict(process_parsed)
-    _pcount = lambda lab: sum(1 for e in _pmap.get(lab, []) if e[0] == "i")
-    needs_html = render_focus(_pmap.get("needs", []), show_headers=False)
-    n_needs = _pcount("needs")
+    # Only the "Needs the candidate" group survives, rendered on Your Move as the "System &
+    # tooling" group: a DECISION the owner has to make about their own setup — a credential, a
+    # cadence — which no issue on the engine repo can resolve for them. Since dev #93 those
+    # items are `data/asks.jsonl` rows with kind=system, not a focus.md section.
+    needs_html = render_focus([("i", t, a) for t, a, _oid in system_asks],
+                              show_headers=False)
+    n_needs = len(system_asks)
 
     pills = "".join(
         f'<span class="pill{" done" if x == "x" else ""}">{md_inline(name)}</span>'
@@ -1180,7 +1279,7 @@ def main():
     # Every staged draft used to render under "awaiting your approval to send", including part-B
     # messages that cannot go until the recipient accepts. One observed state showed seven items
     # as needing the candidate, of which ONE was actionable. That inverts the surface: a Your Move line has
-    # to be a question or an imperative aimed at him, and a draft he cannot send is neither — so
+    # to be a question or an imperative aimed at them, and a draft they cannot send is neither — so
     # padding the list is how the one list that must be unskippable stops being read.
     #
     # The precondition is now DATA (`**Blocked until:** contact:<id> outcome:a|b`), resolved
@@ -1213,6 +1312,12 @@ def main():
     opp_list_html, opp_counts = render_opportunity_list(_opp_rows, _opp_comps)
 
     covers_html = render_draft_entries(covers, "No cover letters pending.")
+
+    # GitHub #94 — the durable knowledge artifacts, rendered as CONTENT, not filename chips.
+    _preps, _kbs = knowledge_docs()
+    preps_html = render_knowledge_docs(_preps, "No call preps on file.")
+    kbs_html = render_knowledge_docs(_kbs, "No company knowledge files yet.")
+    n_knowledge = len(_preps) + len(_kbs)
 
     # %-d is a glibc/BSD strftime extension; on Windows it raises ValueError and kills the
     # dashboard at the last step. Build the day number by hand (same fix as parse_ics.py).
@@ -1373,11 +1478,13 @@ def main():
   #tab-week:checked    ~ .tabbar label[for="tab-week"],
   #tab-actions:checked ~ .tabbar label[for="tab-actions"],
   #tab-jobs:checked    ~ .tabbar label[for="tab-jobs"],
+  #tab-know:checked    ~ .tabbar label[for="tab-know"],
   #tab-network:checked ~ .tabbar label[for="tab-network"] {
       color: var(--fg); border-bottom-color: var(--accent, #c96442); background: transparent; }
   #tab-week:checked    ~ .panel-week,
   #tab-actions:checked ~ .panel-actions,
   #tab-jobs:checked    ~ .panel-jobs,
+  #tab-know:checked    ~ .panel-know,
   #tab-network:checked ~ .panel-network { display: block; }
   .tabpanel > h2:first-child { margin-top: 0; }
   .tabpanel { scroll-margin-top: 64px; }
@@ -1462,15 +1569,34 @@ def main():
   #of-non:checked ~ .opp-list .opp[data-bucket="applied"],
   #of-non:checked ~ .opp-list .opp[data-bucket="person"] { display:none; }
   @media (prefers-reduced-motion: reduce) { .opp-more { transition:none; } }
+
+  /* dev #95 follow-on: the migration marker must read as a defect on the row, not a value. */
+  .play-unres { color: var(--chip-action-fg); font-weight: 600; }
+
+  /* ── Knowledge artifacts (GitHub #94) — kb/ and call_preps/ rendered as content. ── */
+  .kdoc { border-bottom: 1px solid var(--divider); padding: 8px 0; }
+  .kdoc:last-child { border-bottom: none; }
+  .kdoc > summary { cursor: pointer; list-style: none; }
+  .kdoc > summary::-webkit-details-marker { display: none; }
+  .kdoc > summary::before { content: "▸ "; opacity: .6; }
+  .kdoc[open] > summary::before { content: "▾ "; }
+  .kdoc-body { margin: 8px 0 4px 14px; padding-left: 12px;
+               border-left: 2px solid var(--card-border); }
+  .kd-h { font-weight: 700; margin: 10px 0 4px; }
+  .kd-h1 { font-size: 15px; }
+  .kd-h2 { font-size: 14px; }
+  .kd-h3, .kd-h4 { font-size: 13px; color: var(--muted2); }
+  .kd-p { font-size: 13px; line-height: 1.55; margin: 4px 0; }
+  .kd-l { font-size: 13px; margin: 4px 0 4px 18px; padding: 0; }
+  .kd-q { border-left: 3px solid var(--card-border); background: var(--divider);
+          border-radius: 4px; padding: 4px 10px; margin: 4px 0; font-size: 13px; }
 """
     n_drafts = len(_sendable)
     n_covers = len(covers)
     _sub, _hum, _noth = application_tables()
     n_submitted, n_human, n_nothing = len(_sub), len(_hum), len(_noth)
     n_move = len(your_move)
-    # count only real items ('i'), not the '## ' header entries parse_focus also returns
     n_week = sum(1 for e in thisweek_focus if e[0] == 'i')
-    n_process = sum(1 for e in process_focus if e[0] == 'i')
 
     body_inner = f"""<h1>{html.escape(_dashboard_title())}</h1>
 <div class="updated">Tracker snapshot: <strong>{today}</strong> · generated by scripts/generate_dashboard.py · source: the tracker repo (git)</div>
@@ -1479,11 +1605,13 @@ def main():
 <input type="radio" name="dtab" id="tab-week" checked>
 <input type="radio" name="dtab" id="tab-actions">
 <input type="radio" name="dtab" id="tab-jobs">
+<input type="radio" name="dtab" id="tab-know">
 <input type="radio" name="dtab" id="tab-network">
 <div class="tabbar">
   <label for="tab-week">📅 This Week<span class="tcount">{n_week}</span></label>
   <label for="tab-actions">⚡ Your Move<span class="tcount">{n_move + n_needs + n_drafts + n_covers}</span></label>
   <label for="tab-jobs">🎯 Opportunities<span class="tcount">{len(live_rows)}</span></label>
+  <label for="tab-know">📚 Knowledge<span class="tcount">{n_knowledge}</span></label>
   <label for="tab-network">🤝 Network</label>
 </div>
 
@@ -1546,6 +1674,18 @@ def main():
   <code>unrecorded</code> means nobody asked, and it is never guessed.</div>
 </div>
 
+<div class="tabpanel panel-know">
+  <h2>📚 Knowledge — call preps &amp; company files</h2>
+  <div class="sub" style="margin:-6px 0 10px"><strong>What lives here:</strong> the durable
+  knowledge artifacts, readable in full from this page — the dated call-prep notes and the
+  per-company knowledge base. Each is collapsed behind its title; click to read. Durable
+  content from a prep is promoted to the company file before the prep is archived.</div>
+  <h2 style="font-size:16px;margin-top:18px">📞 Call preps <span class="tcount">{len(_preps)}</span></h2>
+  <div class="card">{preps_html}</div>
+  <h2 style="font-size:16px;margin-top:18px">🏢 Company knowledge base <span class="tcount">{len(_kbs)}</span></h2>
+  <div class="card">{kbs_html}</div>
+</div>
+
 <div class="tabpanel panel-network">
   <h2>🤝 Search-firm &amp; PE relationships</h2>
   <div class="card">{render_table(fh, frows, status_cols=(2,))}
@@ -1575,7 +1715,7 @@ def main():
     (ROOT / "dashboard_artifact.html").write_text(artifact_doc, encoding="utf-8")
 
     print(f"Wrote dashboard.html ({len(doc)} bytes) and dashboard_artifact.html ({len(artifact_doc)} bytes), "
-          f"{len(focus)} opportunity focus items + {len(process_focus)} process focus items, "
+          f"{n_move} Your Move items ({n_needs} system asks), {n_week} This Week commitments, "
           f"{len(srows2)} sourced ({len(live_rows)} active / {len(closed_rows)} closed), "
           f"{len(frows)} firm rows, {len(arows)} alumni rows")
 

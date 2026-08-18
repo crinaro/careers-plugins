@@ -2,7 +2,7 @@
 """Turn a drafted cover letter into a deliverable: a Google Doc, or a local .docx.
 
 ⭐ WHY THERE ARE TWO MODES. The letter is written in `cover_letters.md` and the candidate needs it as a
-document he can print or attach. That used to mean Google Drive, unconditionally — which quietly
+document the candidate can print or attach. That used to mean Google Drive, unconditionally — which quietly
 made a Google account a requirement for using this plugin at all. `local_docx` removes that: it
 writes a real .docx with the stdlib alone (a .docx is a zip of XML), so someone with no Drive, no
 connector, or a workplace that blocks it still gets a document.

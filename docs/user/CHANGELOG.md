@@ -2,6 +2,11 @@
 
 Generated from public issues confirmed fixed and shipped. Newest first.
 
+## 0.26.0
+- [#24](https://github.com/crinaro/careers-plugins/issues/24) — A user-owned role recorded with a future action date and a sourced/backlog status is invisible on the 'decisions waiting on you' surface until its action date arrives
+- [#23](https://github.com/crinaro/careers-plugins/issues/23) — record.py's create path leaves the caller to guess a valid record at every stage: --dry-run passes input the real write then refuses, rejection messages name no field, and the fields listing omits enum and type constraints
+- [#22](https://github.com/crinaro/careers-plugins/issues/22) — The generated-dashboard publish model has a staleness window: the published view can lag committed state via two distinct mechanisms
+
 ## 0.25.0
 - [#21](https://github.com/crinaro/careers-plugins/issues/21) — OPEN DESIGN QUESTION: two dashboard views present the same records through two different taxonomies instead of one lifecycle-state view
 - [#20](https://github.com/crinaro/careers-plugins/issues/20) — Generated dashboard renders knowledge-base and call-preparation artifacts as filename strings, not their content

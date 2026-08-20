@@ -1034,6 +1034,39 @@ def your_move_roles_from_jsonl():
     return [(t, a, oid) for (t, a, oid, _d) in items]
 
 
+def your_move_decides_from_jsonl():
+    """dev #142 (public #24) — the DECIDE group: a user-owned role in a sourced/backlog
+    state (`status: backlog`, `verdict: undecided`) whose pursue/pass decision is still
+    owed. Rendered REGARDLESS of `next_action_date`, because the date answers "when is the
+    action scheduled" while this surface asks "is a decision owed" — before this group
+    existed, the intuitive way to record a newly sourced role (backlog status, user as
+    owner, future act-by date) produced a row visible on NO Your Move group, silently.
+
+    ⭐ This does not reopen issue #79's over-inclusion: membership is keyed on the VERDICT,
+    not on relaxing the date cutoff. A decided defer (`verdict: parked`) stays off, a
+    future-dated LIVE role is still `scheduled`, and a `blocked_until` still routes an
+    undecided row to waiting/unresolved. Membership is your_move.py's alone; this renders
+    ONLY the `decide` group, as its own labelled section so the reader can tell what kind
+    of item it is from the surface — #79's core complaint.
+
+    Returns render_your_move's (title, ask, opp_id) tuples, soonest act-by first."""
+    companies = {c["id"]: c for c in load_jsonl("companies.jsonl")}
+    classified = _ym.classify_opportunities(load_jsonl("opportunities.jsonl"), OWNER_TOKEN)
+    items = []
+    for o, state, _why in classified:
+        if state != "decide":
+            continue
+        d = o.get("next_action_date")
+        ask = "Decide: pursue or pass — the verdict is still undecided."
+        if d:
+            ask += " Act by %s." % d
+        if o.get("next_action"):
+            ask += " %s" % o["next_action"]
+        items.append((_role_title(o, companies, "🔎"), ask, o.get("id"), d or "9999"))
+    items.sort(key=lambda t: t[3])
+    return [(t, a, oid) for (t, a, oid, _d) in items]
+
+
 def your_move_channels_from_jsonl():
     """Relationship follow-ups on Your Move are a FILTERED VIEW of data/channels.jsonl —
     GitHub #44.
@@ -1244,6 +1277,22 @@ def main():
     channel_touches = your_move_channels_from_jsonl()
     your_move = role_decisions + channel_touches + your_move
     your_move_html = render_your_move(your_move, ym_links)
+    # dev #142 (public #24) — pursue/pass decisions owed on sourced/backlog roles. A "needs
+    # you" group in its own labelled section (never inside the primary card: the act-by date
+    # may be in the future, and #79 established that the primary list means "you, NOW").
+    decide_rows = your_move_decides_from_jsonl()
+    your_move_decide_html = ""
+    if decide_rows:
+        your_move_decide_html = (
+            '<h2 style="font-size:16px;margin-top:22px">🔎 Decide — pursue or pass '
+            '<span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">Sourced roles whose verdict is '
+            'still <code>undecided</code>. A decision owed to you is listed from the moment '
+            'the record exists — the act-by date is a deadline, not a reveal date. Deciding '
+            'moves the record (<code>verdict: pursue</code> or <code>pass</code>/'
+            '<code>parked</code>) and the row leaves by itself.</div>'
+            '<div class="card">%s</div>'
+            % (len(decide_rows), render_your_move(decide_rows, ym_links)))
     # GitHub #79 — group membership is your_move.py's alone; these states must never
     # land inside your_move_html above, but must not vanish silently either.
     _unresolved_rows, _waiting_rows, _fulfilled_rows, _play_rows = your_move_callouts()
@@ -1595,7 +1644,9 @@ def main():
     n_covers = len(covers)
     _sub, _hum, _noth = application_tables()
     n_submitted, n_human, n_nothing = len(_sub), len(_hum), len(_noth)
-    n_move = len(your_move)
+    # dev #142 — an owed pursue/pass decision counts on the tab badge like any other item
+    # waiting on the owner, even though it renders in its own section below the primary card.
+    n_move = len(your_move) + len(decide_rows)
     n_week = sum(1 for e in thisweek_focus if e[0] == 'i')
 
     body_inner = f"""<h1>{html.escape(_dashboard_title())}</h1>
@@ -1634,6 +1685,7 @@ def main():
   <h2>⚡ Decisions &amp; actions waiting on you</h2>
   <div class="sub" style="margin:-6px 0 10px"><strong>What lives here:</strong> job-search actions blocked on you — each line is a question or an ask. Once it\u2019s answered it leaves this list entirely, rather than becoming a \u201cdone\u201d note. System and tooling items now sit in their own group just below, not on a separate tab.</div>
   <div class="ym-card"><div class="ym-head">Nothing here moves without you</div>{your_move_html}</div>
+  {your_move_decide_html}
   {your_move_callouts_html}
   <h2 style="font-size:16px;margin-top:22px">⚙️ System &amp; tooling — needs you <span class="tcount">{n_needs}</span></h2>
   <div class="sub" style="margin:-6px 0 10px">Decisions about the tracker, scripts, credentials, or tooling that only you can make. Same rule: each stays until it is done.</div>

@@ -261,10 +261,12 @@ def main():
         owner = _profile.owner_token()
     except Exception:
         owner = None
+    # Membership is your_move.py's ONE predicate — dev #142 widened it (backlog+undecided
+    # rows now render as the Decide group), and re-deriving it here would have silently
+    # missed exactly those rows.
     derived = [(o, keywords("%s %s" % (o.get("title") or "", o.get("next_action") or "")))
                for o in opps
-               if owner and o.get("next_action_owner") == owner
-               and o.get("status") in _ym.LIVE_OPP_STATUSES]
+               if owner and _ym.is_your_move_candidate(o, owner)]
     for a, ka in ask_keys:
         for o, ko in derived:
             if a.get("opp_id") and a["opp_id"] == o.get("id"):

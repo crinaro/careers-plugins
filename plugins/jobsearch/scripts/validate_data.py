@@ -153,6 +153,10 @@ ACCESS = set(_route.REQUIREMENTS) | set(_route.LEGACY) | {"manual-candidate"}
 # structural), and a commitment's `date` may be the literal `unresolved` — the migration marker
 # for a date that could not be parsed, same precedent as blocked_until and play_stage.
 ASK_KINDS = {"role", "system"}
+# dev #133 / public #22 — the actions record.py can resolve an ask against atomically. An
+# unparseable value must be LOUD (the precondition.py rule): a resolves_when nobody can act on
+# means an ask that claims it will self-resolve and never does — it looks handled and is not.
+ASK_RESOLVES_WHEN = {"application", "outreach"}
 UNRESOLVED = "unresolved"
 
 
@@ -459,13 +463,26 @@ def main():
             problems.append("%s: jd_url missing (use explicit null if none)" % label)
 
         # comp typed
+        #
+        # ⭐ dev #143 / public #23: `comp` must be an OBJECT ({"min": ..., "max": ...}), and a
+        # caller passing it as a plain string (the exact class of mistake `fields` used to
+        # leave nobody warned about) crashed this function outright — `comp.get(...)` on a
+        # str has no such method, so the whole validator died before printing a single problem
+        # line. That produced the "generic banner naming nothing" failure: record.py's refusal
+        # message is built from this script's stdout, and a crash mid-check leaves stdout
+        # empty. Guard the shape FIRST so a wrongly-typed comp gets an actionable problem line,
+        # like every other typed field here, instead of taking the whole run down with it.
         comp = r.get("comp")
         if comp is not None:
-            mn, mx = comp.get("min"), comp.get("max")
-            if not isinstance(mn, (int, float)) or not isinstance(mx, (int, float)):
-                problems.append("%s: comp.min/max must be numbers — %r" % (label, comp))
-            elif mn > mx:
-                problems.append("%s: comp.min %s > comp.max %s" % (label, mn, mx))
+            if not isinstance(comp, dict):
+                problems.append("%s: comp must be an object with numeric 'min'/'max' keys — "
+                                "got %s: %r" % (label, type(comp).__name__, comp))
+            else:
+                mn, mx = comp.get("min"), comp.get("max")
+                if not isinstance(mn, (int, float)) or not isinstance(mx, (int, float)):
+                    problems.append("%s: comp.min/max must be numbers — %r" % (label, comp))
+                elif mn > mx:
+                    problems.append("%s: comp.min %s > comp.max %s" % (label, mn, mx))
 
         # location shape
         loc = r.get("location", {})
@@ -691,6 +708,20 @@ def main():
         if r.get("resolved_on") and not r.get("resolution"):
             problems.append("%s: resolved_on with no resolution — say how it resolved "
                             "(answered / lapsed / superseded / done)" % label)
+        # dev #133 / public #22 — the atomic-resolution contract. Both halves are LOUD on
+        # purpose: an unknown resolves_when can never fire, and one with no opp_id has no
+        # opportunity to resolve against — either way the ask claims it will self-resolve
+        # when the action lands, and it never will.
+        if "resolves_when" in r and r.get("resolves_when") is not None:
+            if r["resolves_when"] not in ASK_RESOLVES_WHEN:
+                problems.append("%s: resolves_when %r is not one of %s — record.py can never "
+                                "match it, so the ask would wait forever while looking handled"
+                                % (label, r["resolves_when"],
+                                   "/".join(sorted(ASK_RESOLVES_WHEN))))
+            elif not r.get("opp_id"):
+                problems.append("%s: resolves_when without opp_id — there is no opportunity "
+                                "for the recorded action to land on, so it can never resolve"
+                                % label)
 
     # ---- commitments (dev #93) — This Week, structured ----
     commitments, e = load("commitments.jsonl")

@@ -23,7 +23,7 @@ Python 3.9+, stdlib only.
 
 import argparse, json, os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _root import profile_root, engine_root
+from _root import profile_root, engine_root, looks_like_profile
 from _atomic import write_jsonl, write_json
 
 ROOT, ENGINE = profile_root(), engine_root()
@@ -240,6 +240,79 @@ def check_click_guard():
     return rows
 
 
+# ⭐ dev #155 — the recurrence check. install_rulebook.py now REFUSES to write a stamped
+# rulebook anywhere that doesn't positively carry a profile marker, but that only stops the
+# NEXT stray write — it says nothing about whether one already happened. `install_rulebook.py
+# --check` only ever looks at the ONE destination it would write to today, so it cannot see a
+# copy sitting somewhere else, left behind by a resolution that predates the refusal (or arrived
+# some other way). A stray copy is mechanically findable because it carries its own provenance
+# stamp — this is that sweep, wired into `doctor` rather than left as a one-off shell command,
+# so it runs the same way every other health check does instead of depending on someone
+# remembering the incident.
+_STRAY_SWEEP_MAXDEPTH = 4
+_STRAY_SWEEP_SKIP_DIRS = (".git", "node_modules")
+
+
+def check_stray_rulebooks():
+    """Any STAMPED CLAUDE.md under $HOME that does NOT sit inside a profile-shaped directory
+    (`config.json` or `data/`) is dev #155 recurring — a rulebook install landed somewhere no
+    profile lives, and would be loaded as project context by every Claude Code session that
+    starts beneath it.
+
+    Deliberately narrow: $HOME, shallow (maxdepth 4, matching the issue's own reproduction
+    command), skipping `.git`/`node_modules`. This is a targeted sweep for the one incident
+    shape, not a filesystem-wide audit — and it must DEGRADE HONESTLY rather than report a false
+    CLEAN: if $HOME cannot be read at all, that is a WARN naming the reason, never a silent OK.
+    It must also never flag a profile's OWN legitimate copy, including the edge case where a
+    profile's root happens to be $HOME itself — `looks_like_profile()` is checked on the
+    CONTAINING directory of every hit before it is reported.
+    """
+    home = os.path.expanduser("~")
+    try:
+        if not os.path.isdir(home) or not os.access(home, os.R_OK):
+            return [(WARN, "stray rulebooks", "cannot read %s — sweep skipped" % home)]
+    except OSError as e:
+        return [(WARN, "stray rulebooks", "could not stat %s (%s) — sweep skipped" % (home, e))]
+
+    import install_rulebook as _ir
+
+    hits, dirs_swept = [], 0
+    try:
+        for dirpath, dirnames, filenames in os.walk(home):
+            dirs_swept += 1
+            depth = dirpath[len(home):].count(os.sep)
+            if depth >= _STRAY_SWEEP_MAXDEPTH:
+                dirnames[:] = []
+            dirnames[:] = [d for d in dirnames if d not in _STRAY_SWEEP_SKIP_DIRS]
+            if "CLAUDE.md" not in filenames:
+                continue
+            candidate = os.path.join(dirpath, "CLAUDE.md")
+            try:
+                with open(candidate, "r", encoding="utf-8") as fh:
+                    head = fh.read(400)
+            except OSError:
+                continue                       # unreadable file — nothing this check can assert
+            if _ir.MARKER not in head:
+                continue                       # not one of ours — the unmanaged case, not this bug
+            if looks_like_profile(dirpath):
+                continue                       # a genuine profile's own copy, correctly placed
+            hits.append(candidate)
+    except OSError as e:
+        return [(WARN, "stray rulebooks", "sweep incomplete (%s) — check manually" % e)]
+
+    if not hits:
+        return [(OK, "stray rulebooks",
+                 "none found outside a profile (swept %d dirs under %s, maxdepth %d)"
+                 % (dirs_swept, home, _STRAY_SWEEP_MAXDEPTH))]
+    rows = [(BAD, "stray rulebooks",
+             "%d stamped CLAUDE.md found outside any profile — dev #155" % len(hits))]
+    for h in hits[:5]:
+        rows.append((BAD, "  ->", h))
+    if len(hits) > 5:
+        rows.append((BAD, "  ->", "...and %d more" % (len(hits) - 5)))
+    return rows
+
+
 def main():
     ap = argparse.ArgumentParser(description="Is this profile healthy and current with the plugin?")
     ap.add_argument("--fix", action="store_true",
@@ -258,6 +331,8 @@ def main():
                 ("DATA", check_data()),
                 ("OUTBOUND-CLICK GUARD (report only — a probe never gates the hook)",
                  check_click_guard()),
+                ("STRAY RULEBOOKS (dev #155 — a stamped CLAUDE.md outside any profile)",
+                 check_stray_rulebooks()),
                 ("CREDENTIALS (yours to place)", check_credentials())]
     bad = warn = 0
     for title, rows in sections:

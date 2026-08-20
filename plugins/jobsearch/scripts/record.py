@@ -65,6 +65,14 @@ A refused take now also diagnoses the self-deadlock instead of leaving a silent 
 default `--wait` is seconds (holders release in seconds by design), and the refusal says when
 `--already-locked` is the answer.
 
+## ⭐ COMPLETING AN ACTION RESOLVES ITS ASK, IN THE SAME WRITE (dev #133 / public #22)
+
+An ask in data/asks.jsonl that carries `resolves_when` ("application" | "outreach") plus
+`opp_id` has declared which recorded action answers it. When this API lands that action on that
+opportunity, the ask is resolved under the same lock hold — one transaction, no drift window.
+Asks without the declaration are never touched (guessing closes still-needed questions);
+check_action_claims.py remains the detection backstop for them.
+
 Usage:
     python3 scripts/record.py create <opp_id> '{"company_id":"...","title":"...", ...}'
     python3 scripts/record.py set <opp_id> stage screening
@@ -81,6 +89,7 @@ Python 3.9+. Standard library only.
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -258,10 +267,265 @@ def coerce(v):
     return v
 
 
-def validate():
+def validate(data_dir=None):
+    """Run validate_data.py and report (returncode, stdout, stderr).
+
+    ⭐ `data_dir` points the validator at a THROWAWAY copy instead of the real store, via
+    CLAUDESEARCH_DATA_DIR — the same override validate_data.py already exposes for a fresh-
+    install check. This is what lets --dry-run run the exact validator a real write runs
+    (dev #143 / public #23), without the real store ever being touched.
+
+    stderr is captured too, not discarded. A validator that CRASHES (an unguarded value-shape
+    assumption, for one) prints NOTHING to stdout — its own summary is only printed after every
+    check finishes — so a caller reading stdout alone sees a blank result exactly when it most
+    needs an answer. See _diagnostic_lines below."""
+    env = os.environ.copy()
+    if data_dir:
+        env["CLAUDESEARCH_DATA_DIR"] = data_dir
     r = subprocess.run([sys.executable, os.path.join(ENGINE_SCRIPTS, "validate_data.py")],
-                       capture_output=True, text=True)
-    return r.returncode, r.stdout
+                       capture_output=True, text=True, env=env)
+    return r.returncode, r.stdout, r.stderr
+
+
+def dry_run_validate(store, rows):
+    """Validate `rows` AS IF they were the real store, on a disposable copy of the whole data
+    directory — cross-references into companies/channels/messages/asks still resolve, and the
+    real files are never opened for writing. Returns the same (rc, stdout, stderr) shape as
+    validate().
+
+    ⭐ THIS is the fix for dev #143 / public #23 failure #1: a dry-run create on an enum-invalid
+    or wrongly-typed field used to report success, because --dry-run only ran check_field's
+    unknown-key/required checks and stopped — it never ran validate_data.py, which is the ONLY
+    thing that catches an enum violation or a value of the wrong shape. The identical input as
+    a real write was refused and rolled back. A green dry-run that does not predict the real
+    write is worse than no dry-run at all, so dry-run now runs the SAME validator, not a lesser
+    one."""
+    with tempfile.TemporaryDirectory(prefix="record-dryrun-") as shadow:
+        for name in os.listdir(DATA):
+            src = os.path.join(DATA, name)
+            if name.endswith(".jsonl") and os.path.isfile(src):
+                shutil.copy2(src, os.path.join(shadow, name))
+        with open(os.path.join(shadow, STORES[store]), "w", encoding="utf-8") as fh:
+            for r in rows:
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        return validate(data_dir=shadow)
+
+
+def _diagnostic_lines(rc, out, err):
+    """The last few informative lines from a validate_data.py run — never blank.
+
+    dev #143 / public #23 failure #2: a refused write's banner named no field, no offending
+    value, no rule — even though the validator computes exactly that detail internally for most
+    problems (see enum()'s message format, which this reuses verbatim by printing the
+    validator's own problem lines rather than inventing a second style of message). The banner
+    went blank specifically when the validator CRASHED (docs/schema.md's comp field passed as a
+    non-object used to do exactly this — see validate_data.py's comp check): stdout was empty
+    because nothing had been printed yet, and the traceback landed on stderr, which record.py
+    was throwing away entirely. Fall back to stderr, then to the bare fact of a silent crash, so
+    there is always something to act on instead of an empty line."""
+    text = (out or "").strip()
+    if text:
+        return text.split("\n")[-6:]
+    err_text = (err or "").strip()
+    if err_text:
+        return (["(the validator produced no output on stdout — it crashed; last lines of "
+                 "its stderr:)"] + err_text.split("\n")[-6:])
+    return ["(the validator exited %d with no output on stdout or stderr)" % rc]
+
+
+def _validator_module():
+    """validate_data.py, imported as a MODULE rather than run as the subprocess `validate()`
+    uses — so `fields` can read its enum sets DIRECTLY. docs/data_model.json's own _enums_note
+    already states the intended architecture: 'ENUMS ARE NOT DUPLICATED HERE ... record.py
+    imports that module' — true now for the first time (dev #143 / public #23 failure #3).
+    Lazy: only the `fields` path pays for this."""
+    import validate_data as _vd
+    return _vd
+
+
+# field -> allowed-value SET, keyed by store then field name. Every set here is a REFERENCE to
+# a validate_data.py constant, never a restated literal — the values still live in exactly one
+# place. ⚠️ If a future enum() call in validate_data.py covers a new field, add it here too, or
+# `fields` will silently omit it: this registry is a second place that knows WHICH field maps
+# to WHICH constant (unavoidable — that linkage isn't data validate_data.py exposes any other
+# way), even though it duplicates no VALUES.
+def _enum_registry(_vd):
+    return {
+        "companies": {"vertical": _vd.VERTICALS, "status": _vd.COMPANY_STATUS},
+        "channels": {"type": _vd.CHANNEL_TYPES, "review_cadence": _vd.CADENCES,
+                    "access": _vd.ACCESS},
+        "opportunities": {"status": _vd.OPP_STATUS, "stage": _vd.STAGES,
+                          "verdict": _vd.VERDICTS, "play_stage": _vd.PLAY_STAGES,
+                          "next_action_owner": _vd.OWNERS},
+    }
+
+
+# (store, array-name) -> {field: allowed-value SET}. Same reference-not-restatement rule.
+def _array_enum_registry(_vd):
+    return {
+        ("opportunities", "outreach"): {
+            "status": _vd.OUTREACH_STATUS, "outcome": _vd.OUTREACH_OUTCOME,
+            "medium": _vd.MEDIA, "touch_type": _vd.TOUCH_TYPES,
+            "recipient_role": _vd.RECIPIENT_ROLES, "delivery": _vd.DELIVERY,
+            "address_status": _vd.ADDRESS_STATUS,
+        },
+        ("opportunities", "contacts"): {
+            "email_status": _vd.CONTACT_EMAIL_STATUS, "path_type": _vd.PATH_TYPES,
+        },
+        ("opportunities", "applications"): {
+            "method": _vd.APPLICATION_METHODS, "status": _vd.APPLICATION_STATUS,
+        },
+        ("opportunities", "fit.requirements"): {
+            "verdict": _vd.FIT_VERDICTS, "question_status": _vd.FIT_Q_STATUS,
+        },
+    }
+
+
+def _object_shaped_fields(store, _vd):
+    """Fields whose value is an OBJECT, not a string — the exact class of mistake the report
+    cites: a comp-style field (an object with two numeric keys) rendered by `fields` as though
+    it accepted free text, with nothing to tell a caller otherwise. The model file only carries
+    flat field-name lists, so a caller reading just that has no way to know; state it here."""
+    if store != "opportunities":
+        return {}
+    return {
+        "comp": "object — {\"min\": number, \"max\": number}",
+        "location": ("object — {\"type\": one of {%s}, \"declared\": string, "
+                     "\"primary\": string}" % ", ".join(sorted(_vd.LOC_TYPES))),
+        "fit": "object — {\"requirements\": [fit.requirements[] rows, below]}",
+    }
+
+
+# ---- dev #133 / public #22: completing an action resolves its ask, IN THE SAME WRITE --------
+#
+# The incident: an application was recorded on an opportunity while the ask requesting approval
+# for exactly that application stayed open in data/asks.jsonl — two independent writes, one
+# happened without the other, and a freshly regenerated dashboard rendered the answered question
+# as still pending. check_action_claims.py DETECTS that drift after the fact; this PREVENTS it,
+# but only where the linkage is declared: an ask carrying `resolves_when` ("application" or
+# "outreach") plus `opp_id` states, machine-readably, which recorded action answers it. When
+# record.py lands that action on that opportunity, it resolves the ask under the SAME lock hold,
+# before release. An ask without `resolves_when` is deliberately untouched — guessing which ask
+# an action answers is how a still-needed question gets silently closed, which is worse than the
+# drift this exists to prevent.
+
+ASKS_FILE = "asks.jsonl"
+ASK_ACTION_FOR_ARRAY = {"applications": "application", "outreach": "outreach"}
+
+
+def _asks_path():
+    return os.path.join(DATA, ASKS_FILE)
+
+
+def _load_asks():
+    try:
+        with open(_asks_path(), encoding="utf-8") as fh:
+            return [json.loads(l) for l in fh if l.strip()]
+    except OSError:
+        return None          # no asks store at all — legal (pre-0.25.0 profiles)
+
+
+def _action_evidence(rec, action):
+    """The newest dated evidence of `action` on this record, or None.
+
+    Same funnel check_action_claims.opp_action_evidence() trusts: any dated application row;
+    any outreach row with status == "sent" and a date. A drafted outreach row is not evidence —
+    the ask asked for the touch, not for the intention."""
+    dates = []
+    if action == "application":
+        for ap in (rec.get("applications") or []):
+            if isinstance(ap, dict) and ap.get("date"):
+                dates.append(str(ap["date"]))
+    else:
+        for out in (rec.get("outreach") or []):
+            if isinstance(out, dict) and out.get("status") == "sent" and out.get("date"):
+                dates.append(str(out["date"]))
+    return max(dates) if dates else None
+
+
+def linked_asks(rid, action, asks):
+    """The OPEN asks this write could resolve: opp_id matches, resolves_when matches."""
+    return [a for a in (asks or [])
+            if not a.get("resolved_on") and a.get("opp_id") == rid
+            and a.get("resolves_when") == action]
+
+
+def resolve_linked_asks(rid, rec, array_leaf):
+    """Resolve every declared-linkage ask this write's action answers. Returns [(id, title)].
+
+    Runs INSIDE the caller's lock hold, after the opportunity write validated clean. Evidence
+    must be dated on/after the ask's `created` — an action that predates the ask is what the
+    ask was written about, not the answer to it (same baseline as check_action_claims.py).
+
+    ⚠️ Failure honesty: the opportunity write has already landed and validated. If the asks
+    write then fails, we roll back ONLY asks.jsonl and say so loudly — the state degrades to
+    exactly what it was before this change existed (action recorded, ask open), which the
+    detection backstop catches. Never let an asks problem un-land a valid action record."""
+    action = ASK_ACTION_FOR_ARRAY.get(array_leaf)
+    if not action:
+        return []
+    asks = _load_asks()
+    if asks is None:
+        return []
+    when = _action_evidence(rec, action)
+    if not when:
+        return []
+    hit = []
+    for a in linked_asks(rid, action, asks):
+        created = str(a.get("created") or "")
+        if created and when < created:
+            continue
+        a["resolved_on"] = when
+        a["resolution"] = "done"
+        stamp = "auto-resolved with the write that recorded its %s (record.py, dev #133)" % action
+        a["note"] = ("%s · %s" % (a["note"], stamp)) if a.get("note") else stamp
+        hit.append((a.get("id"), a.get("title") or ""))
+    if not hit:
+        return []
+
+    before = None
+    try:
+        with open(_asks_path(), "rb") as fh:
+            before = fh.read()
+    except OSError:
+        pass
+    fd, tmp = tempfile.mkstemp(dir=DATA, prefix=".record-asks-", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            for a in asks:
+                fh.write(json.dumps(a, ensure_ascii=False) + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, _asks_path())
+    except Exception as e:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        print("  ⚠️ the action WROTE, but resolving its ask(s) failed: %s" % e)
+        print("  The ask(s) remain OPEN — check_action_claims.py will flag the drift.")
+        return []
+    rc, out, err = validate()
+    if rc != 0:
+        # Only this file can be guilty: the store validated clean two steps ago.
+        ok = False
+        if before is not None:
+            fd2, tmp2 = tempfile.mkstemp(dir=DATA, prefix=".rollback-asks-", suffix=".tmp")
+            try:
+                with os.fdopen(fd2, "wb") as fh:
+                    fh.write(before)
+                    fh.flush()
+                    os.fsync(fh.fileno())
+                os.replace(tmp2, _asks_path())
+                with open(_asks_path(), "rb") as fh:
+                    ok = fh.read() == before
+            except Exception:
+                if os.path.exists(tmp2):
+                    os.unlink(tmp2)
+        print("  ⚠️ the action WROTE, but the ask resolution broke the validator and was %s."
+              % ("rolled back" if ok else "NOT VERIFIABLY ROLLED BACK — restore asks.jsonl "
+                 "from git"))
+        print("  " + "\n  ".join(_diagnostic_lines(rc, out, err)))
+        return []
+    return hit
 
 
 def main():
@@ -287,13 +551,34 @@ def main():
     args = ap.parse_args()
 
     if args.op == "fields" or args.fields:
+        # ⭐ dev #143 / public #23 failure #3: this listing used to print field names and
+        # required-ness ONLY — no enum values for constrained fields, no marker for a field
+        # whose value is an object rather than a string. A caller could not construct a valid
+        # record from this output alone; it took a failed write plus reading validator source.
         m = model()["stores"][args.file]
+        _vd = _validator_module()
+        enums = _enum_registry(_vd).get(args.file, {})
+        arr_enums = _array_enum_registry(_vd)
+        objects = _object_shaped_fields(args.file, _vd)
         print("%s — %s" % (args.file, ", ".join(sorted(m["fields"]))))
         print("  required: %s" % ", ".join(m.get("required") or []))
+        if objects:
+            print("\n  OBJECT-TYPED (not a string):")
+            for f in sorted(objects):
+                print("    %s: %s" % (f, objects[f]))
+        if enums:
+            print("\n  ENUMS (allowed values):")
+            for f in sorted(enums):
+                print("    %s: {%s}" % (f, ", ".join(sorted(enums[f]))))
         for a, spec in sorted((m.get("arrays") or {}).items()):
             print("\n  %s[] — %s" % (a, ", ".join(sorted(spec["fields"]))))
             print("     required: %s%s" % (", ".join(spec.get("required") or []),
                   ("  · id: %s" % spec["id_field"]) if spec.get("id_field") else ""))
+            a_enums = arr_enums.get((args.file, a)) or {}
+            if a_enums:
+                print("     enums:")
+                for f in sorted(a_enums):
+                    print("       %s: {%s}" % (f, ", ".join(sorted(a_enums[f]))))
         ban = {k: v for k, v in model()["banned_aliases"].items() if not k.startswith("_")}
         print("\n  BANNED ALIASES (same meaning, two spellings): %s"
               % ", ".join("%s->%s" % (k, v) for k, v in sorted(ban.items())))
@@ -460,6 +745,42 @@ def main():
     print("%s: %s" % (args.rid, desc))
     if args.dry_run:
         print("  --dry-run: nothing written.")
+        # ⭐ dev #143 / public #23 failure #1 — RUN THE SAME VALIDATOR A REAL WRITE RUNS, on a
+        # disposable copy of the store (dry_run_validate). Before this fix, --dry-run stopped
+        # after check_field's unknown-key/required checks — it never ran validate_data.py,
+        # which is the only thing that catches an enum violation or a wrongly-shaped value. A
+        # dry-run create on such an input reported success while the identical real write was
+        # refused and rolled back: a false green, actively misleading rather than merely
+        # unhelpful. Never weaken the real write to match; raise the dry-run to match it.
+        shadow_rows = json.loads(json.dumps(rows))     # deep copy — `rows` itself stays untouched
+        if args.op == "create":
+            shadow_rows.append(new_row)
+        else:
+            shadow_rec = find(shadow_rows, args.rid)
+            try:
+                apply(shadow_rec)
+            except KeyError as e:
+                print("  %s" % e)
+                return 1
+        # Was the REAL store already invalid, independent of this hypothetical write? Same
+        # question the real write asks before it would consider rolling anything back.
+        pre_rc, _, _ = validate()
+        rc, out, err = dry_run_validate(args.file, shadow_rows)
+        if rc != 0 and pre_rc != 0:
+            print("  ⚠️ the store is ALREADY invalid, independent of this hypothetical write —")
+            print("  dry-run cannot tell you whether THIS change is clean until that is fixed:")
+            print("  " + "\n  ".join(_diagnostic_lines(rc, out, err)))
+            return 1
+        if rc != 0:
+            print("  ⛔ a REAL (non-dry-run) write of this would be REFUSED and rolled back.")
+            print("  " + "\n  ".join(_diagnostic_lines(rc, out, err)))
+            return 1
+        print("  ✅ dry-run validated clean against the same validator a real write runs.")
+        if args.file == "opportunities" and args.op in ("append", "set-in") and args.rest:
+            action = ASK_ACTION_FOR_ARRAY.get(args.rest[0].split(".")[-1])
+            for a in linked_asks(args.rid, action, _load_asks()) if action else []:
+                print("  would also resolve ask %r — %s (resolves_when: %s, dev #133)"
+                      % (a.get("id"), (a.get("title") or "")[:60], action))
         return 0
 
     # ---- the ONLY window the lock is held: read, mutate, write, verify ----------
@@ -507,17 +828,17 @@ def main():
         # ⭐ Was the store ALREADY invalid? Asked here, before touching anything, because
         # validate_data.py checks the WHOLE store — an unrelated pre-existing problem would
         # otherwise make this write look guilty and get rolled back for nothing.
-        pre_rc, _ = validate()
+        pre_rc, _, _ = validate()
 
         save_atomic(args.file, rows)
-        rc, out = validate()
+        rc, out, err = validate()
         if rc != 0:
             if pre_rc != 0:
                 # The store was already invalid. Rolling back would discard a legitimate write to
                 # "fix" something it did not cause, so keep it and say exactly that.
                 print("  ⚠️ WROTE. The validator still fails — BUT IT WAS ALREADY FAILING BEFORE")
                 print("  this write, so this change is not the cause and was NOT rolled back.")
-                print("  " + "\n  ".join(out.strip().split("\n")[-6:]))
+                print("  " + "\n  ".join(_diagnostic_lines(rc, out, err)))
                 print("  Fix the pre-existing problem; the store is invalid for the next worker.")
                 return 1
 
@@ -528,10 +849,17 @@ def main():
             # refusal that writes is worse than either honest outcome**: the caller retries and
             # duplicates the row, and the next worker inherits an invalid store. Observed
             # 2026-08-05 appending an outreach row whose message_ref did not yet resolve.
+            #
+            # ⭐ dev #143 / public #23 failure #2: this banner used to print `out`'s tail
+            # unconditionally. When validate_data.py CRASHES instead of finishing (an unguarded
+            # value-shape assumption, e.g. comp passed as a string), stdout is empty — its
+            # summary only prints after every check runs — so the banner named no field, no
+            # value, no rule. _diagnostic_lines falls back to stderr, then to a plain statement
+            # of the crash, so this is never blank.
             restored = restore(args.file, before)
-            post_rc, _ = validate()
+            post_rc, _, _ = validate()
             print("  ⛔ REFUSED — the write broke the store, so it was ROLLED BACK.")
-            print("  " + "\n  ".join(out.strip().split("\n")[-6:]))
+            print("  " + "\n  ".join(_diagnostic_lines(rc, out, err)))
             if restored and post_rc == 0:
                 print("  ✅ Rolled back; the store is byte-identical to before and validates.")
                 print("  Nothing was written. Fix the input and re-run — retrying is safe.")
@@ -541,6 +869,13 @@ def main():
                 print("  ⛔⭐ ROLLBACK FAILED — THE FILE IS IN AN UNKNOWN STATE. DO NOT RETRY.")
                 print("  Restore %s from git before any further write." % STORES[args.file])
             return 1
+
+        # ---- dev #133: the write landed clean — resolve any ask that DECLARED this action
+        # answers it, under the SAME lock hold. Two facts, one transaction boundary.
+        if args.file == "opportunities" and args.op in ("append", "set-in") and args.rest:
+            for aid, title in resolve_linked_asks(args.rid, rec, args.rest[0].split(".")[-1]):
+                print("  ✦ resolved ask %r — %s (its declared action is now recorded)"
+                      % (aid, title[:60]))
     finally:
         # Under --already-locked the hold belongs to the CALLING RUN — releasing it here would
         # strip the protection off the rest of the run's write phase mid-flight.
@@ -551,7 +886,29 @@ def main():
         print("  written atomically · validator clean · run's lock left in place")
     else:
         print("  written atomically · validator clean · lock released")
+    if args.file == "opportunities":
+        _your_move_visibility_note(new_row if args.op == "create" else rec)
     return 0
+
+
+def _your_move_visibility_note(rec):
+    """dev #142 (public #24) — close the SILENCE at the moment the record is made. The
+    reporter's row (user-owned, backlog, future date) was invisible on the decisions
+    surface with no warning at creation; the membership fix handles that combination, and
+    this covers the residue: any row that names the owner as next_action_owner but lands in
+    NO Your Move group (a parked backlog row, `in-motion`, a closed status). Advisory only —
+    it never blocks a write, and it fails open, because a broken profile must not make the
+    write API refuse."""
+    try:
+        import your_move as _ym
+        import profile as _profile
+        reason = _ym.invisible_reason(rec or {}, _profile.owner_token())
+    except Exception:
+        return
+    if reason:
+        print("  ℹ️ NOT ON YOUR MOVE — this row names you as next_action_owner, but %s."
+              % reason)
+        print("  (dev #142: a decision recorded invisibly looks handled and is not.)")
 
 
 if __name__ == "__main__":

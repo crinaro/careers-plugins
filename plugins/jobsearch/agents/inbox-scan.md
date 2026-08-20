@@ -1,9 +1,23 @@
 ---
 name: inbox-scan
 color: cyan
-description: 'Scan Gmail for job-search signals — PRIORITIZING recruiter and human mail and meeting artifacts; treating board and aggregator job-alert digests as a low-value backstop, since direct search is the real source. Use for the daily Gmail pass. Not for LinkedIn messages (linkedin-runner), not for reading a JD (opportunity-researcher), and it reports findings rather than writing the pipeline. See "When to invoke" in the agent body.'
+description: 'Scan Gmail for job-search signals — PRIORITIZING recruiter and human mail and meeting artifacts; treating board and aggregator job-alert digests as a low-value backstop, since direct search is the real source. Use for the daily Gmail pass. Not for LinkedIn messages (linkedin-runner), not for reading a JD (opportunity-researcher), and it reports findings rather than writing the pipeline. Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: haiku
 ---
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

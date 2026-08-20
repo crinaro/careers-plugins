@@ -230,7 +230,7 @@
    "arrays": {}
   },
   "asks": {
-   "_note": "dev #93 (public #21) - the hand-authored tail of Your Move and the Process Needs list, cut over from focus.md prose. An ask is OPEN until resolved_on is set; every view filters resolved rows out, so expulsion is structural rather than an editing habit. kind=role renders in the Your Move queue; kind=system renders in the System & tooling group. Not for anything derivable from a record: a role decision belongs on the opportunity (next_action_owner), a relationship touch on the channel (next_touch).",
+   "_note": "dev #93 (public #21) - the hand-authored tail of Your Move and the Process Needs list, cut over from focus.md prose. An ask is OPEN until resolved_on is set; every view filters resolved rows out, so expulsion is structural rather than an editing habit. kind=role renders in the Your Move queue; kind=system renders in the System & tooling group. Not for anything derivable from a record: a role decision belongs on the opportunity (next_action_owner), a relationship touch on the channel (next_touch). resolves_when (dev #133 / public #22, optional) declares the exact recorded action that answers a decision ask - 'application' or 'outreach' on the linked opp_id - so record.py can resolve the ask IN THE SAME LOCKED WRITE that records the action; it requires opp_id (validate_data.py refuses one without the other, because a resolves_when that can never fire looks handled and is not). An ask without it stays on the detection path (check_action_claims.py).",
    "id_field": "id",
    "fields": [
     "id",
@@ -241,6 +241,7 @@
     "act_by",
     "opp_id",
     "channel_id",
+    "resolves_when",
     "resolved_on",
     "resolution",
     "note"

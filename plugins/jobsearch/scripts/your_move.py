@@ -22,6 +22,24 @@ renders exactly what `classify_opportunities` / `classify_channels` say.
     scheduled    no unfired trigger, and next_action_date is in the future.
     now          owner is the candidate, status is live, no unfired trigger, and the date is
                  today or in the past (or absent).
+    decide       owner is the candidate, status is `backlog`, verdict is `undecided`, no
+                 unfired trigger — REGARDLESS of next_action_date. See below.
+
+## ⭐ `decide` — a decision owed is not an action scheduled (dev #142 / public #24)
+
+Issue #79 correctly stopped ownership alone from being the filter: it added the LIVE-status
+gate and the date cutoff so future-dated, resolved and other-party-conditional rows stop
+cluttering the "needs you" queue. But the restriction also swallowed the intuitive way to
+record a NEWLY SOURCED role: `status: backlog` + `verdict: undecided` + the user as owner +
+a future act-by date produced a row visible on NO Your Move group, silently.
+
+The two complaints are in tension only if the date is read as the membership key. It is not:
+`next_action_date` answers *"when is the action scheduled"*, while this surface asks *"is a
+decision owed"*. The schema already distinguishes the two backlog meanings — `verdict:
+undecided` (pursue/pass still owed → `decide`, shown with its act-by date as a DEADLINE, not
+a reveal date) versus `verdict: parked` (a decided "not now" → stays off the surface, which
+is what keeps #79's clutter out). `blocked_until` keeps its full precedence here: an
+undecided row genuinely gated on another party is `waiting`/`unresolved`, never `decide`.
 
 ## The `blocked_until` field
 
@@ -70,7 +88,7 @@ PreconditionError = _pre.PreconditionError
 
 LIVE_OPP_STATUSES = {"active-pursuit", "needs-resolution"}
 
-ROLE_STATES = ("unresolved", "waiting", "scheduled", "now")
+ROLE_STATES = ("unresolved", "waiting", "scheduled", "now", "decide")
 CHANNEL_STATES = ("now", "scheduled", "fulfilled")
 
 # Statuses on which a play position is meaningless — validate_data.py refuses the field on
@@ -160,16 +178,58 @@ def role_state(o, today):
     return "now", ""
 
 
+def is_your_move_candidate(o, owner_token):
+    """Does this opportunity row belong on the Your Move surface AT ALL (in some group)?
+    The ONE membership predicate — `classify_opportunities` and `check_sections.py`'s
+    duplicate-ask rule both use it; nothing re-derives it.
+
+    Membership = owned by `owner_token` AND (a LIVE status, or — dev #142 — `backlog` with
+    `verdict: undecided`, the state a newly sourced role starts in). `backlog` with any
+    DECIDED verdict (`parked`, `pass`) stays off: that is the clutter issue #79 removed."""
+    if o.get("next_action_owner") != owner_token:
+        return False
+    return (o.get("status") in LIVE_OPP_STATUSES
+            or (o.get("status") == "backlog" and o.get("verdict") == "undecided"))
+
+
+def invisible_reason(o, owner_token):
+    """None if this row reaches some Your Move group, else ONE line saying why it never
+    will — the record-creation advisory's text (dev #142 / public #24: the reporter's row
+    was invisible *silently*, and the silence, not just the membership, was the defect).
+    Only meaningful for rows that name `owner_token`; others return None (a row owned by
+    someone else is invisible by design, not by accident)."""
+    if o.get("next_action_owner") != owner_token:
+        return None
+    if is_your_move_candidate(o, owner_token):
+        return None
+    st = o.get("status")
+    if st == "backlog":
+        return ("status 'backlog' with verdict %r is a decided \"not now\" and never "
+                "surfaces on Your Move; if a pursue/pass decision is still owed, set "
+                "verdict to 'undecided'" % (o.get("verdict"),))
+    return ("status %r is outside what Your Move reads (%s, or 'backlog' with verdict "
+            "'undecided')" % (st, " / ".join(sorted(LIVE_OPP_STATUSES))))
+
+
 def classify_opportunities(opps, owner_token, today=None):
-    """[(opp, state, why)] for every LIVE opportunity owned by `owner_token` — the ONE
+    """[(opp, state, why)] for every opportunity `is_your_move_candidate` admits — the ONE
     definition of Your Move role-group membership. `generate_dashboard.py` consumes this;
-    it must never re-derive the filter itself."""
+    it must never re-derive the filter itself.
+
+    A `backlog`+`undecided` row lands in `decide` regardless of its date (dev #142 — the
+    date is a deadline on a decision already owed, not a reveal date), unless an unfired or
+    unreadable `blocked_until` outranks it exactly as it would for a live row."""
     today = today or datetime.date.today().isoformat()
     out = []
     for o in opps:
-        if o.get("next_action_owner") != owner_token or o.get("status") not in LIVE_OPP_STATUSES:
+        if not is_your_move_candidate(o, owner_token):
             continue
         state, why = role_state(o, today)
+        if o.get("status") == "backlog" and state in ("scheduled", "now"):
+            d = o.get("next_action_date")
+            state = "decide"
+            why = ("verdict is 'undecided' — a pursue/pass decision is owed%s"
+                   % (" (act by %s)" % d if d else ""))
         out.append((o, state, why))
     return out
 
@@ -280,7 +340,8 @@ def main():
         print(json.dumps(data, indent=1))
     else:
         print("YOUR MOVE — role and channel group membership\n")
-        marks = {"now": "🎯", "scheduled": "🗓️ ", "waiting": "⏳", "unresolved": "🚧"}
+        marks = {"now": "🎯", "scheduled": "🗓️ ", "waiting": "⏳", "unresolved": "🚧",
+                 "decide": "🔎"}
         for r in data["roles"]:
             print("  %s %-10s %s" % (marks[r["state"]], r["state"],
                                      (r["title"] or r["id"] or "?")[:60]))

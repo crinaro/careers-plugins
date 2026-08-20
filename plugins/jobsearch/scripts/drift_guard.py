@@ -31,6 +31,21 @@ def _quiet_exit():
     sys.exit(0)
 
 
+def _state_dir():
+    """The drift-marker directory: `<profile>/.jobsearch/drift` when a genuine profile
+    resolves, else the `~/.claude/jobsearch/drift` machine fallback (dev #151 — per-profile
+    state lives with the profile). Any failure falls back to $HOME: a guard that breaks a
+    session over a state directory is worse than a misplaced marker."""
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        from _root import state_root
+        return os.path.join(state_root(), "drift")
+    except Exception:                                   # noqa: BLE001
+        return os.path.join(os.path.expanduser("~"), ".claude", "jobsearch", "drift")
+
+
 def _ver(s):
     return tuple(int(x) for x in re.findall(r"\d+", str(s or "0"))[:3] or [0])
 
@@ -41,7 +56,7 @@ def _announce_once(message, session, key):
     ⚠️ Announcing on every prompt trains the user to ignore it, which ends up exactly where
     saying nothing does. The key includes what is being announced, so a NEW condition in the
     same session is still heard."""
-    state = os.path.join(os.path.expanduser("~"), ".claude", "jobsearch", "drift")
+    state = _state_dir()
     sess = re.sub(r"[^A-Za-z0-9_-]", "", str(session))[:64] or "nosession"
     marker = os.path.join(state, sess)
     stamp = re.sub(r"\s+", " ", key)[:200]
@@ -132,7 +147,7 @@ def main():
 
         # A refresh that happened at THIS session's start still leaves the loaded copy stale,
         # because the rulebook does not reload when the file changes. Only a restart fixes it.
-        state = os.path.join(os.path.expanduser("~"), ".claude", "jobsearch", "drift")
+        state = _state_dir()
         flag = os.path.join(state, "rulebook-refreshed")
         try:
             with open(flag, encoding="utf-8") as fh:

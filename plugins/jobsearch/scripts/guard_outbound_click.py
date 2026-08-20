@@ -161,6 +161,47 @@ parse, and a resolver against data that already exists.
   fail-open policy decision** — dev #111 says so explicitly. Nothing here changes the guard's
   verdict on any click; this only makes the inertness durable and queryable.
 
+## dev #137 — `claude -p --chrome`'s selftest was never actually inert; SessionStart just asked
+## the question before it could possibly have an answer
+
+Filed as "the one S3 mode with click tools is the one where the guard is inert" — the selftest's
+FAIL was real, but the conclusion drawn from it was not established. Probed directly (CLI
+2.1.231, three independent `claude -p --chrome` sessions, 2026-08-18) to settle it:
+
+- **The transcript is neither absent nor at a different path.** The payload's own
+  `transcript_path` is exactly `~/.claude/projects/<cwd-slug>/<session_id>.jsonl` — the same
+  convention `derive_fallback_transcript_path()` already encodes — and after the session ends
+  that exact file exists and parses cleanly. **Failure mode 2 fired** (dev #102's "present but
+  cannot be opened" — `FileNotFoundError`), never mode 1 (no `transcript_path` in the payload).
+- **It is not a rare race — it is deterministic, and unfixable by waiting inside the hook.** A
+  SessionStart hook that polls its own `transcript_path` for up to 8.5s (nearly the whole 10s
+  hook timeout) never observes the file. A lightweight hook that returns immediately does see it
+  — but only ~3s later, from OUTSIDE the hook, once the model's first turn begins. This proves
+  transcript creation is gated on EVERY SessionStart hook returning, not on elapsed time: no
+  retry loop inside `--selftest` can ever close this gap, on this surface, by construction.
+- **The real click-time guard is unaffected.** `evaluate()` re-derives `diagnose_transcript()`
+  fresh on every invocation (dev #102), and a click's `PreToolUse` fires from the same hook
+  plumbing as any other tool's. Proxied with `Bash` (no click tool was ever given to a probe
+  child — see the hand-back for the discipline this followed): the transcript already has
+  content at the FIRST `PreToolUse` of the session, well before a click could plausibly be the
+  session's very first tool call. **The guard was never actually inert when it mattered.**
+
+The defect worth fixing, then, was not the guard's classification — it was dev #111's own
+durable record believing the SessionStart false negative. Recording "inert" from a transcript
+that merely doesn't exist YET would durably and systematically mislabel every `-p` session, which
+is the false-positive twin of the missing-observation problem dev #111 was built to solve: **a
+wrong fact in the queryable store is worse than no fact**, because it reads as researched truth.
+
+`transcript_pending_creation()` recognizes this ONE narrow condition — `FileNotFoundError` on a
+path that independently matches this same payload's own `derive_fallback_transcript_path()`
+result, i.e. Claude Code's own addressing convention, never a guess — and both `--selftest` and
+the click path skip the durable "inert" record for it, staying loud in-session with honest
+wording instead. Every existing dev #102 / dev #111 regression fixture uses a payload without a
+matching `session_id` + `cwd`, so none of them can satisfy this condition; a genuinely wrong or
+broken transcript path — the shape those fixtures exist to prove — still records "inert"
+immediately, unchanged. Fail-open posture: **completely untouched** — every affected click was
+already being ALLOWed before this fix and still is; only the recording and the wording changed.
+
 Deliberately NOT in `whoami.py`'s capability set: `whoami` declares capability for CLAIMING
 work; this is a safety net, not a capability, and a probe result must never gate whether the
 hook runs. `whoami` prints the status line OUTSIDE its capabilities block, and `--can` does
@@ -311,6 +352,38 @@ def resolve_transcript_path(payload):
     if path:
         return path, False
     return derive_fallback_transcript_path(payload), True
+
+
+def transcript_pending_creation(payload, path, usable, detail):
+    """dev #137 — True when `path` is unopenable specifically because Claude Code has not
+    CREATED it yet, not because it is wrong or broken.
+
+    Probed directly (CLI 2.1.231, three independent `claude -p --chrome` sessions, 2026-08-18):
+    under `-p`, the SessionStart selftest's `FileNotFoundError` is not a rare race — it is
+    deterministic. A SessionStart hook that polls its OWN payload's `transcript_path` for up to
+    8.5s (nearly the hook's full 10s budget) never observes the file; a lightweight hook that
+    returns immediately does, ~3s later, once the model's first turn begins — proving transcript
+    creation is gated on EVERY SessionStart hook returning, not on elapsed time, so no amount of
+    in-hook retrying can ever close this gap. Generalized via a Bash `PreToolUse` proxy (the same
+    hook-timing plumbing `GUARDED_CLICK_TOOLS` uses): the transcript already has content — before
+    any Bash tool result even exists — at the FIRST `PreToolUse` of any kind in the session. So
+    the resolver is not wrong and the transcript is not absent; the SessionStart check simply
+    runs before the file can possibly exist on this surface, and is reliably present by the time
+    a real click could fire.
+
+    This is corroboration, not a guess: it fires ONLY when `path` is exactly what
+    `derive_fallback_transcript_path()` would independently compute from THIS SAME payload's own
+    `session_id` + `cwd` — i.e. Claude Code's own (unofficially observed) addressing convention,
+    not a path this guard invented. A payload that does not carry a matching session_id/cwd (every
+    existing dev #102 / dev #111 regression fixture, none of which sets `cwd`) cannot satisfy
+    this, so a genuinely wrong or broken path still reads as a real open-failed observation,
+    unchanged. `usable=True` short-circuits to False — there is nothing pending about a transcript
+    that already opened and parsed."""
+    if usable or not path:
+        return False
+    if "FileNotFoundError" not in (detail or ""):
+        return False
+    return derive_fallback_transcript_path(payload) == path
 
 
 def diagnose_transcript(path):
@@ -471,8 +544,8 @@ def classify_one(action_input, page_text):
     return "ALLOW", "ref %s resolved to %r — not outbound-terminal" % (ref, label)
 
 
-# Set by evaluate() to this invocation's (usable, diag_detail), or None when the call never
-# reached diagnosis (unguarded tool, no inputs). Read by main_hook() for status recording
+# Set by evaluate() to this invocation's (usable, diag_detail, pending), or None when the call
+# never reached diagnosis (unguarded tool, no inputs). Read by main_hook() for status recording
 # (dev #111) WITHOUT re-reading the transcript — a third full read per click of a possibly
 # large file, purely for bookkeeping, would be paying correctness money for accounting.
 # A hook process runs evaluate() exactly once, so a module global is safe there; direct
@@ -488,7 +561,13 @@ def evaluate(payload):
     unusable, that is exactly the condition the SessionStart selftest would also hit, so an
     unresolved click's note is escalated to the loud "GUARD INERT" wording rather than the
     generic per-click ambiguity note — and because this runs per hook invocation, that escalation
-    happens on EVERY click while the condition persists, not once at startup."""
+    happens on EVERY click while the condition persists, not once at startup.
+
+    dev #137: unless `transcript_pending_creation()` says this specific unusable-ness is just the
+    transcript not existing YET (see its docstring) — in which case the note says so honestly
+    instead of claiming "GUARD INERT", because that claim would usually be false: proven, the
+    transcript is reliably present by the time any tool's PreToolUse fires, well before a click
+    could plausibly be the very first tool call of a session."""
     global _LAST_DIAGNOSIS
     _LAST_DIAGNOSIS = None
     tool_name = payload.get("tool_name") or ""
@@ -502,7 +581,8 @@ def evaluate(payload):
 
     transcript_path, _used_fallback = resolve_transcript_path(payload)
     usable, diag_detail = diagnose_transcript(transcript_path)
-    _LAST_DIAGNOSIS = (usable, diag_detail)
+    pending = transcript_pending_creation(payload, transcript_path, usable, diag_detail)
+    _LAST_DIAGNOSIS = (usable, diag_detail, pending)
     records = load_transcript(transcript_path) if usable else None
     by_uuid = index_by_uuid(records) if records else {}
     anchor = find_anchor(records) if records else None
@@ -515,7 +595,13 @@ def evaluate(payload):
         if verdict == "DENY":
             deny_reasons.append(reason)
         elif verdict is None:
-            if not usable:
+            if not usable and pending:
+                notes.append(
+                    "transcript not created yet on this surface at this point in the session "
+                    "(dev #137) -- this click was allowed because nothing can be classified "
+                    "until it exists, not because the guard is proven inert -- %s"
+                    % diag_detail)
+            elif not usable:
                 notes.append(
                     "GUARD INERT on this surface (the same condition --selftest checks at "
                     "SessionStart) -- %s -- this click was allowed because nothing on this "
@@ -537,11 +623,15 @@ def main_hook():
 
         # dev #111: make this invocation's diagnosis durable and queryable. Best-effort,
         # AFTER classification, and never able to change the verdict below.
+        # dev #137: EXCEPT when transcript_pending_creation() said this unusable-ness is just
+        # startup timing, never recorded — a false "inert" observation in the durable log is
+        # exactly the defect dev #111 exists to prevent, aimed at itself.
         if _LAST_DIAGNOSIS is not None:
-            usable, diag_detail = _LAST_DIAGNOSIS
-            record_status("ok" if usable else "inert", "click",
-                          "ok" if usable else _reason_code(diag_detail),
-                          payload.get("session_id"))
+            usable, diag_detail, pending = _LAST_DIAGNOSIS
+            if not pending:
+                record_status("ok" if usable else "inert", "click",
+                              "ok" if usable else _reason_code(diag_detail),
+                              payload.get("session_id"))
 
         if denied:
             sys.stderr.write(
@@ -849,25 +939,40 @@ def main_selftest():
 
     ok_fixture, detail_fixture = _selftest_fixture()
     ok_live, detail_live = _selftest_live(payload)
+    path_live, _used_fallback_live = resolve_transcript_path(payload)
+    pending = ok_fixture and transcript_pending_creation(payload, path_live, ok_live, detail_live)
 
     # dev #111: the durable record. One coded event per session start, so "has this install
     # had an inert guard for two days?" is answerable from data instead of somebody noticing.
+    # dev #137: EXCEPT when `pending` — never record "inert" from a transcript that simply does
+    # not exist YET (transcript_pending_creation()'s docstring). Doing so would durably and
+    # systematically mislabel every `-p` session as inert, which is the false-positive twin of
+    # the missing-observation problem dev #111 exists to fix — a wrong fact in the store is worse
+    # than no fact.
     if not ok_fixture:
         reason = "fixture-fail"
     elif not ok_live:
         reason = _reason_code(detail_live)
     else:
         reason = "ok"
-    record_status("ok" if (ok_fixture and ok_live) else "inert", "selftest", reason,
-                  payload.get("session_id"))
+    if not pending:
+        record_status("ok" if (ok_fixture and ok_live) else "inert", "selftest", reason,
+                      payload.get("session_id"))
 
     print("guard_outbound_click --selftest")
     print("  fixture parser/verb-pattern check: %s — %s" % ("OK" if ok_fixture else "FAIL",
                                                              detail_fixture))
-    print("  live transcript envelope check:    %s — %s" % ("OK" if ok_live else "FAIL",
-                                                             detail_live))
+    if pending:
+        print("  live transcript envelope check:    PENDING — %s" % detail_live)
+        print("    [dev #137: not recorded as inert -- Claude Code has not created this "
+              "session's transcript yet, which is expected at SessionStart under some launch "
+              "modes (e.g. `claude -p`); the live click path re-checks fresh on every click, by "
+              "which point the transcript is reliably present]")
+    else:
+        print("  live transcript envelope check:    %s — %s" % ("OK" if ok_live else "FAIL",
+                                                                 detail_live))
 
-    if not (ok_fixture and ok_live):
+    if not ok_fixture or (not ok_live and not pending):
         sys.stdout.write(json.dumps({
             "systemMessage": "guard_outbound_click --selftest FAILED (%s%s%s) — the outbound-"
                               "click guard is INERT on this surface. Browser sends are "
@@ -876,6 +981,16 @@ def main_selftest():
                               % (("fixture: %s" % detail_fixture if not ok_fixture else ""),
                                  (" / " if not ok_fixture and not ok_live else ""),
                                  ("live: %s" % detail_live if not ok_live else "")),
+        }) + "\n")
+    elif pending:
+        sys.stdout.write(json.dumps({
+            "systemMessage": "guard_outbound_click --selftest: could not verify the live "
+                              "transcript at session start (%s). This is NOT evidence the guard "
+                              "is inert (dev #137) -- Claude Code defers creating this session's "
+                              "transcript until after every SessionStart hook returns, so no "
+                              "SessionStart-time check can see it on this surface. The guard "
+                              "re-verifies fresh on every actual click, and THAT observation is "
+                              "what gets recorded." % detail_live,
         }) + "\n")
     return 0  # never blocks startup — same posture as the click path
 

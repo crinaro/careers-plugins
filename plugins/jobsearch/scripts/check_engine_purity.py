@@ -177,6 +177,73 @@ ENGINE = _tracked_engine_files()
 RECORD = {"docs/incident_archive.md", "log.md", "focus.md", "handoff.md"}
 
 
+# ⭐⭐ AN ORDINARY ENGLISH WORD MUST NOT BECOME A SEARCH TERM ON ITS OWN — dev #144.
+#
+# `check_engine_purity.py --require-profile` went red on every run on this machine, and every
+# hit was a false positive: `encountered()` extracted a single common word from the live profile
+# (a name/company head that happens to spell an ordinary word), and `scan()`'s case-insensitive,
+# identifier-aware match then fired on that SAME word wherever it occurred in ordinary engine
+# prose — "trigger that reconnect ahead of time", "ahead of any possible click", "doc-ahead-of-
+# code gap", "one minor ahead of the engine". None of those sentences mention the profile; the
+# collision is purely lexical.
+#
+# The existing guards (length floor, capitalisation, platform/placeholder exclusion — see
+# `encountered()` below and `test_the_contact_extractor_keeps_the_same_guards`) were never meant
+# to catch this. They ask "is this shaped like a name/company", and an ordinary word capitalised
+# at the head of a JSON string ("Ahead Solutions, Inc" -> head "Ahead") is shaped exactly like
+# one. The class of bug is real terms that are ALSO real words — no length/case/identifier rule
+# distinguishes them, because the term genuinely came from the profile and genuinely matches
+# prose that has nothing to do with it.
+#
+# ⚠️ NO DICTIONARY PACKAGE IS AVAILABLE (Python 3.9+, stdlib only), so "is this a real word" has
+# to be something shipped or something structural. A full dictionary (tens of thousands of
+# entries) was considered and rejected: it is unauditable by a human reviewer, it would need its
+# own update/licensing story, and it still would not tell you which words are common ENOUGH to
+# collide with ordinary prose — "defenestrate" is a real word and would almost never fire.
+#
+# Chosen instead: a small, hand-curated, fully auditable list of CLOSED-CLASS / high-frequency
+# English words (prepositions, conjunctions, common adverbs and pronouns — the vocabulary of
+# ordinary sentences, not of names). It is deliberately NOT a general dictionary and deliberately
+# short enough to read start to finish in a code review. Person names, company names and place
+# names are essentially never drawn from this closed class, so filtering it costs almost nothing
+# in real coverage while removing exactly the collision class dev #144 hit. Applied ONLY to a
+# SINGLE TOKEN matching a term exactly (case-insensitive) — a multi-word term ("Ahead Logistics
+# Group") is never filtered here, because two ordinary words combining into one specific phrase
+# is not something prose does by accident.
+# ⚠️ Three masculine object/possessive pronouns are deliberately absent from this list —
+# `check_gendered_language.py` gates every shipped file at zero for exactly that pronoun family,
+# and this list ships. Their feminine counterparts are outside that gate's scope and stay in.
+STOPWORDS = frozenset("""
+about above across after again against ahead all almost alone along already also although always
+among amount another any anyone anything anywhere around away back because become becomes before
+behind being below beside besides between beyond both cannot certain come could deep did does
+done down during each either else enough especially even ever every everyone everything
+everywhere except far few first for from further get gets give given go going gone had has have
+having here hers herself how however if inside instead into itself just keep
+kept kind know known large last late later least less likely long look looking made make many
+maybe might more most much must myself near nearby need never next no none nor not nothing now
+nowhere off often once one only onto other others otherwise out outside over own past perhaps
+put quite rather really same second seem seems seen several shall should since some somehow
+someone something sometime sometimes somewhat somewhere soon still such take than that their
+them themselves then thence there thereafter thereby therefore therein thereupon these they
+thing things think this those though through throughout thus together too took toward towards
+under underneath unless until upon used using various very was way ways were what whatever when
+whence whenever where whereas whereby wherein whereupon wherever whether which while whither who
+whoever whole whom whose why will with within without would yet you your yours yourself
+yourselves
+""".split())
+
+
+def _is_ordinary_word(term):
+    """True only for a SINGLE-TOKEN term that is exactly (case-insensitively) a STOPWORDS entry.
+
+    ⭐ ONE implementation, called from every source that adds a term — the same discipline as
+    `encountered()` two definitions below: re-typing this check per source is how it drifts.
+    """
+    term = str(term or "").strip()
+    return bool(term) and " " not in term and term.lower() in STOPWORDS
+
+
 def _profile_terms():
     """The names to look for come FROM the profile — never hard-coded here, or this script
     becomes the very thing it is checking for."""
@@ -188,8 +255,9 @@ def _profile_terms():
         for k in ("full_name", "name", "preferred_reference"):
             if ident.get(k):
                 for part in re.split(r"\s+", str(ident[k])):
-                    if len(part) > 2:
-                        terms.setdefault("name", set()).add(part.strip(".,"))
+                    part = part.strip(".,")
+                    if len(part) > 2 and not _is_ordinary_word(part):
+                        terms.setdefault("name", set()).add(part)
         for m in (u.get("mailboxes") or {}).values() if isinstance(u.get("mailboxes"), dict) \
                 else (u.get("mailboxes") or []):
             if isinstance(m, str) and "@" in m:
@@ -201,7 +269,8 @@ def _profile_terms():
             c = json.load(fh)
         er = (c.get("positioning") or {}).get("employer_recognition") or {}
         for e in (er.get("recognizable") or []) + (er.get("niche_needs_context") or []):
-            terms.setdefault("employer", set()).add(e)
+            if not _is_ordinary_word(e):
+                terms.setdefault("employer", set()).add(e)
         # ⚠️ Extract the CITY TOKEN, not the whole string. The first version required a term
         # with no comma and no space, so a "City, ST" anchor never became a search term at all.
         # The gate then reported CLEAN while a task prompt described searches as "<city>-area
@@ -215,7 +284,8 @@ def _profile_terms():
                 tok = tok.strip()
                 # a place name: capitalised, not a sentence, not a bare state code
                 if (2 < len(tok) < 30 and tok[0].isupper() and tok.count(" ") <= 2
-                        and not tok.endswith(".") and tok.upper() != tok):
+                        and not tok.endswith(".") and tok.upper() != tok
+                        and not _is_ordinary_word(tok)):
                     terms.setdefault("geo", set()).add(tok)
     except Exception:
         pass
@@ -272,9 +342,9 @@ def _profile_terms():
     def encountered(val):
         """One `encountered` term, or None. ⭐ ONE implementation, called from every source.
 
-        The guards (length floor, capitalisation, platform exclusion) are the difference
-        between a gate people keep and a gate people switch off, so they must not be
-        re-typed per source and drift apart."""
+        The guards (length floor, capitalisation, platform exclusion, ordinary-word exclusion —
+        dev #144) are the difference between a gate people keep and a gate people switch off, so
+        they must not be re-typed per source and drift apart."""
         val = str(val or "").strip()
         if not val or "@" in val:
             return None
@@ -286,6 +356,8 @@ def _profile_terms():
         if head.lower() in platforms:
             return None
         if head.lower() in _MASKED_EMPLOYER_PLACEHOLDERS:
+            return None
+        if _is_ordinary_word(head):
             return None
         return head
 

@@ -285,6 +285,18 @@ def main():
         rc = subprocess.run([sys.executable, os.path.join(ENGINE_SCRIPTS, name)],
                             capture_output=True, text=True).returncode
         print("  %-26s %s" % (label, "OK" if rc == 0 else "❌ FAILING — fix before writing"))
+    # dev #133 / public #22 — the published dashboard is a deliverable with its own drift: a
+    # publish that lost a version-conflict race used to be dropped SILENTLY, leaving the
+    # candidate reading a stale published view as current. Checked here mechanically so every
+    # coordinator startup sees it, whatever prompt loaded. The fix is a republish, not a
+    # write-freeze, so the message says exactly that.
+    rc = subprocess.run([sys.executable,
+                         os.path.join(ENGINE_SCRIPTS, "check_dashboard_fresh.py"),
+                         "--publish-state"], capture_output=True, text=True).returncode
+    print("  %-26s %s" % ("published dashboard",
+                          "OK" if rc == 0 else
+                          "❌ BEHIND the repo — republish (check_dashboard_fresh.py --fix, "
+                          "Artifact tool, then --stamp-published)"))
 
     rule("HOW UPDATES REACH YOU")
     print("  PUSH  notifyOnCompletion — a scheduled run notifies THE SUBSCRIBING SESSION when it")

@@ -19,6 +19,15 @@ inexact, and a check that cries wolf is a check somebody switches off. It flags 
 named entity in the item is matched to a dated record that is NEWER than the item's own
 deadline; it never edits, never blocks, and says plainly that a flag is a question.
 
+⭐ dev #133 / public #22 — a SECOND, EXACT comparison alongside the fuzzy name match above.
+`known_entities()` only ever modelled CONTACT touches (channels, messages, sent outreach);
+an ask about a DECISION on the opportunity itself — "approve applying?" — had nothing to
+compare against even after the application was submitted and recorded in that opportunity's
+own `applications[]`, because nobody's name appears in that kind of ask text. The ask row
+already carries `opp_id`, an exact foreign key, so `opp_action_evidence()` compares an ask
+to ITS OWN linked opportunity's recorded applications/outreach directly — no name-matching,
+no fuzziness, and it is the same evidence funnel_report.py already trusts.
+
 Usage:
     python3 scripts/check_action_claims.py
     python3 scripts/check_action_claims.py --verbose
@@ -59,9 +68,12 @@ def hand_authored_items():
     (Until dev #93 this parsed focus.md's `## ⚡ Your Move` section; the asks are a store
     now, but a store row's prose can still claim what the record contradicts, so the
     backstop reads the same rows the dashboard renders.) Membership is `your_move.
-    open_asks`'s, never re-derived here. Returns (title, ask, opp_id) tuples — the shape
-    the flagging loop below has always consumed."""
-    return [(a.get("title") or a.get("id") or "?", a.get("ask") or "", a.get("opp_id"))
+    open_asks`'s, never re-derived here. Returns (title, ask, opp_id, created) tuples —
+    `created` was added for dev #133's opp_id-linked comparison, which needs a baseline
+    date when the ask's own text carries no explicit deadline; the original three fields
+    keep their original order and meaning for the existing name-matching loop."""
+    return [(a.get("title") or a.get("id") or "?", a.get("ask") or "", a.get("opp_id"),
+              str(a.get("created") or ""))
             for a in _ym.open_asks(list(rows("asks.jsonl")))]
 
 
@@ -119,6 +131,37 @@ def known_entities():
     return ent
 
 
+def opp_action_evidence():
+    """{opp_id: (date, why)} — the newest dated evidence, PER LINKED OPPORTUNITY, that
+    something an ask might be requesting a decision about has already happened: an
+    application recorded, or an outreach row marked sent, on that exact opportunity.
+
+    dev #133 / public #22. This is deliberately NOT folded into `known_entities()`: that
+    function matches a NAME appearing in the ask's free text against a NAME the store
+    knows, which is inherently fuzzy. An ask's `opp_id` is an exact foreign key already
+    validated to resolve (`validate_data.py`) — matching on it needs no name in the text
+    at all, so a decision ask like "approve applying to Widgetco?" is reconcilable even
+    though no person's name ever appears in it."""
+    ev = {}
+
+    def note(opp_id, when, why):
+        if not opp_id or not when:
+            return
+        cur = ev.get(opp_id)
+        if cur is None or str(when) > cur[0]:
+            ev[opp_id] = (str(when), why)
+
+    for o in rows("opportunities.jsonl"):
+        oid = o.get("id")
+        for ap in (o.get("applications") or []):
+            if isinstance(ap, dict) and ap.get("date"):
+                note(oid, ap["date"], "an application recorded on the linked opportunity")
+        for out in (o.get("outreach") or []):
+            if isinstance(out, dict) and out.get("status") == "sent" and out.get("date"):
+                note(oid, out["date"], "a sent outreach row on the linked opportunity")
+    return ev
+
+
 TERMINAL = {"passed", "expired"}
 
 
@@ -172,26 +215,35 @@ def main():
     print("=" * 78)
     items = hand_authored_items()
     ent = known_entities()
+    opp_ev = opp_action_evidence()
     print("  open ask(s) with hand-authored text: %d   ·   entities the store knows: %d"
-          % (len(items), len(ent)))
+          "   ·   opportunities with recorded action: %d"
+          % (len(items), len(ent), len(opp_ev)))
 
     if not items:
         print("\n  No open asks in data/asks.jsonl — every Your Move item is derived from a")
         print("  record and cannot drift. That is the #44 end state, not an empty check.")
         return 0
-    if not ent:
-        # ⚠️ NOT A CLEAN RESULT. No entities means nothing could have been compared, which is
-        # the vacuous-scan shape this repo keeps re-finding. Say so rather than print OK.
-        print("\n  !! NOTHING TO COMPARE AGAINST — the store yielded no dated entities.")
+    if not ent and not opp_ev:
+        # ⚠️ NOT A CLEAN RESULT. Nothing to compare against on EITHER path means nothing
+        # could have been compared, which is the vacuous-scan shape this repo keeps
+        # re-finding. Say so rather than print OK. (dev #133: this used to bail out on
+        # `not ent` alone, which skipped the opp_id-linked comparison below even when
+        # `opp_ev` had evidence to offer — a check that stops looking the moment its
+        # first data source is empty is exactly the vacuous-scan shape it warns about.)
+        print("\n  !! NOTHING TO COMPARE AGAINST — the store yielded no dated entities and")
+        print("     no opportunity carries a recorded application or sent outreach.")
         print("     This is NOT a clean result; it means the check could not run.")
         return 0
 
     flagged = []
     for item in items:
-        # hand_authored_items yields (title, ask, opp_id) from the open rows of asks.jsonl.
-        title, ask = item[0], item[1]
+        # hand_authored_items yields (title, ask, opp_id, created) from the open rows of
+        # asks.jsonl.
+        title, ask, opp_id, created = item[0], item[1], item[2], item[3]
         text = "%s %s" % (title, ask)
         deadline = max(DATE_RE.findall(text) or [""])
+        matched = False
         for name, (when, why) in ent.items():
             if name not in text:
                 continue
@@ -200,7 +252,22 @@ def main():
             if deadline and when <= deadline:
                 continue
             flagged.append((title, name, when, why, deadline))
+            matched = True
             break
+        if matched:
+            continue
+        # The opp_id-linked check: exact FK match, no name required in the text at all.
+        # The deadline baseline falls back to the ask's own `created` date when its text
+        # embeds none — an opportunity's sighting or its first outreach usually PREDATES
+        # the ask that discusses it, so comparing against `created` (rather than flagging
+        # on any evidence at all, as the no-deadline name-match path does) keeps this from
+        # flagging every opp-linked ask on its very first run.
+        if opp_id and opp_id in opp_ev:
+            when, why = opp_ev[opp_id]
+            opp_deadline = deadline or created
+            if opp_deadline and when <= opp_deadline:
+                continue
+            flagged.append((title, "opp_id=%s" % opp_id, when, why, opp_deadline))
 
     closed = closed_roles_named_in_prose()
     if closed:
@@ -220,7 +287,7 @@ def main():
           % len(flagged))
     for title, name, when, why, deadline in flagged:
         print("    · %s" % title[:66])
-        print("        %s was last contacted %s (%s)%s"
+        print("        %s — evidence dated %s (%s)%s"
               % (name, when, why, (", after this ask's %s" % deadline) if deadline else ""))
     print("\n  If the action already happened, resolve the ask (resolved_on + resolution) or")
     print("  move it onto the record — a channel's next_touch or an opportunity's next_action")

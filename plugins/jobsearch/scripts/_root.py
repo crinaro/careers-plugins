@@ -170,6 +170,34 @@ def looks_like_profile(path):
     return any(os.path.exists(os.path.join(path, m)) for m in MARKERS)
 
 
+# ⭐ dev #151 — PER-PROFILE STATE BELONGS WITH THE PROFILE; only what is needed to FIND a
+# profile belongs under $HOME. The diagnostics log and the drift markers used to live in
+# `~/.claude/jobsearch/` keyed by session, so two profiles on one machine interleaved in one
+# file with no way to tell them apart — which made guard_status()'s own question ("has THIS
+# install had an inert guard for two days?") unanswerable the moment a second profile existed.
+STATE_DIRNAME = ".jobsearch"
+_HOME_STATE = os.path.join(os.path.expanduser("~"), ".claude", "jobsearch")
+
+
+def state_root(start=None):
+    """Where per-profile engine STATE lives: `<profile>/.jobsearch` when a genuine profile is
+    resolvable, else the machine-global `~/.claude/jobsearch` fallback.
+
+    Resolution uses the FULL `profile_root()` chain — env, cwd walk, remembered pointer —
+    deliberately: state placement is not the binding question (`binding.py` owns that). A
+    PreToolUse hook in a scheduled run has neither env nor a profile cwd, and its guard_status
+    events still belong with the profile the pointer names, or `doctor` cannot see them.
+
+    A disposable resolution (test fixture, temp tree) must never grow a state directory —
+    `is_disposable_profile` already encodes that judgement — so those fall back to $HOME, which
+    the test suite redirects. Events from a context with NO resolvable profile also land in the
+    $HOME fallback: they are machine state, not any profile's."""
+    root = profile_root(start)
+    if looks_like_profile(root) and not is_disposable_profile(root):
+        return os.path.join(root, STATE_DIRNAME)
+    return _HOME_STATE
+
+
 def profile_root(start=None):
     """The USER's profile directory. Never the engine's."""
     env = os.environ.get("CLAUDESEARCH_ROOT")

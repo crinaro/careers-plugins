@@ -1,9 +1,23 @@
 ---
 name: engine-reporter
 color: red
-description: 'Raise a defect or enhancement request with the team that owns the PLUGIN, as an issue on its marketplace repository. Use when a script, skill, gate or agent misbehaved, or when the plugin lacks a capability the search needs. NOT for how this person should run their search — titles, regions, cadence or missing proof points are search-strategist. Normally dispatched by /jobsearch:checkup or the weekly review after triage, rather than reached directly from a user complaint. Proposes by default; files only what the prompt says was approved. See "When to invoke" in the agent body.'
+description: 'Raise a defect or enhancement request with the team that owns the PLUGIN, as an issue on its marketplace repository. Use when a script, skill, gate or agent misbehaved, or when the plugin lacks a capability the search needs. NOT for how this person should run their search — titles, regions, cadence or missing proof points are search-strategist. Normally dispatched by /jobsearch:checkup or the weekly review after triage, rather than reached directly from a user complaint. Proposes by default; files only what the prompt says was approved. Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: sonnet
 ---
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

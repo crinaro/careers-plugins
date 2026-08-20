@@ -6,6 +6,19 @@ description: 'Weekly strategy review: channel yield, cadence adherence, and conf
 # Weekly strategy review
 
 
+## Binding — say which profile this session is acting on (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py
+```
+
+One line, before the journal start: it names the profile and the evidence (`cwd`, `env`, or
+`pointer`). Invoking this skill by name is itself evidence of intent, so `pointer` does not
+refuse here — but it is announced, never silent. **`NO PROFILE` (exit 3) means stop and say
+so.** When you later dispatch a jobsearch agent from a `pointer`-bound session, name the
+profile root in the dispatch prompt — agents refuse pointer-only binding, and the prefix
+`CLAUDESEARCH_ROOT=<root>` on their commands is how a legitimate dispatch binds them.
+
 ## ⭐⭐ THE VERY FIRST ACTION OF THE RUN — JOURNAL THE START
 
 ```bash
@@ -187,7 +200,9 @@ every installation's standing weekly action.
 
 Append the review summary to `log.md` → regenerate the dashboard
 (`~/.claude/jobsearch/run check_dashboard_fresh.py --fix`) → **grep the OUTPUT for what you added** →
-publish via the Artifact tool → commit (explicit paths) →
+publish via the Artifact tool — **on a version conflict, regenerate and publish again, never
+`force`; after a successful publish, `~/.claude/jobsearch/run check_dashboard_fresh.py
+--stamp-published` so a dropped publish cannot stay silent (dev #133)** → commit (explicit paths) →
 **`~/.claude/jobsearch/run sync.py --end-of-run`** → `--release` the lock.
 
 **`~/.claude/jobsearch/run sync.py --end-of-run` replaces the old unconditional push (ADR-012).**

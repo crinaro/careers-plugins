@@ -1,10 +1,24 @@
 ---
 name: opportunity-researcher
 color: blue
-description: 'Deep-dive research on ONE newly sourced role — find the original posting on the employer''s own site or ATS, read the full JD, and research the hiring company. Use for any role in `data/opportunities.jsonl` with an empty `research_log` before it is treated as a real lead. Not for FINDING roles: LinkedIn is linkedin-runner, other boards and career pages are board-sweeper. Reports findings; never writes the pipeline. See "When to invoke" in the agent body.'
+description: 'Deep-dive research on ONE newly sourced role — find the original posting on the employer''s own site or ATS, read the full JD, and research the hiring company. Use for any role in `data/opportunities.jsonl` with an empty `research_log` before it is treated as a real lead. Not for FINDING roles: LinkedIn is linkedin-runner, other boards and career pages are board-sweeper. Reports findings; never writes the pipeline. Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: sonnet
 tools: WebSearch, WebFetch, Read, Bash, mcp__Claude_Browser__preview_start, mcp__Claude_Browser__navigate, mcp__Claude_Browser__get_page_text, mcp__Claude_Browser__read_page, mcp__Claude_Browser__find
 ---
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

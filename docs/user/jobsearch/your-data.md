@@ -42,7 +42,14 @@ shows up as a one-line diff rather than a reformatted file.
 | `handoff.md` | a short letter one session leaves for the next, so nothing gets lost between runs |
 | `drafts.md` | staged messages awaiting your review |
 | `cover_letters.md` | letters, one anchor per role |
-| `kb_<company>.md` | what you have learned about a specific company |
+| `kb/<company>.md` | what you have learned about a specific company (older profiles used flat `kb_<company>.md` files; a migration moved them into the `kb/` directory) |
+| `call_preps/call_prep_<date>.md` | prep notes for a scheduled call, dated rather than named by company; durable content gets promoted into `kb/<company>.md` |
+| `dashboard.html` | the generated dashboard — pipeline state, what needs you, drafts and letters in full |
+| `dashboard_artifact.html` | the same dashboard, in the variant published as a claude.ai Artifact |
+
+`dashboard.html` and `dashboard_artifact.html` are **generated** — every run regenerates them
+from the data above, so hand edits are lost at the next run. If something on the dashboard is
+wrong, the fix is in the underlying record, not the HTML.
 
 ---
 
@@ -287,6 +294,38 @@ Two nuances worth knowing:
 - Newly required fields apply only to records dated after they were introduced. Older rows are
   explicitly grandfathered rather than failing the validator on day one.
 - `unknown` is a legitimate value, not a gap. It makes the hole countable.
+
+---
+
+## `.jobsearch/` — engine state, not your data
+
+Since 0.26.0 your profile directory also contains a `.jobsearch/` folder, created the first time
+you run the plugin after upgrading. It holds two things the plugin keeps for itself: a
+diagnostics log (a record of what the last few runs actually did — used to tell "nothing
+happened" apart from "something failed silently") and a small set of internal drift markers used
+to detect when your profile has fallen behind the installed plugin version.
+
+**You do not need to open it, and there is nothing there worth reading.** Every value it stores
+is a timestamp, an event name, a version number, or a count — never a company, a contact, a
+message, a comp figure, or any other fact about your search. The code that writes to it only
+accepts values shaped like short codes and discards anything that looks like free text, so this
+holds even if a bug elsewhere tried to write something it shouldn't.
+
+**It is not committed to git.** The same upgrade that created the folder added `.jobsearch/` to
+your profile's `.gitignore` automatically — this state is specific to the machine it runs on,
+and committing it would just add churn to every commit for no benefit.
+
+**Where it used to live:** earlier versions kept this same information in one shared location,
+`~/.claude/jobsearch/`, outside any profile. That was fine with one profile on one machine, but
+it meant two different profiles on the same machine wrote into the same file with no way to tell
+their histories apart. If you are upgrading from an older version, the move happened
+automatically the first time you ran the plugin after updating: your existing diagnostics
+history and drift markers were copied into this profile's `.jobsearch/`, and removed from the
+old shared location only after the copy was verified — nothing is discarded if that verification
+fails, it simply retries on your next run. `~/.claude/jobsearch/` still exists after the move; it
+now holds only the three things needed to find your profile and the installed plugin before
+either has been located — the run launcher and two locator pointers — nothing about your search
+itself.
 
 ---
 

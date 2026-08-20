@@ -135,4 +135,13 @@ The most common cause of "it says I have no opportunities" is a profile pointer 
 wrong directory. The second is a session started before an update finished. Both are reported
 explicitly rather than shown as an empty result.
 
+You may also see an agent refuse outright with a message like *"NOT BOUND — REFUSED
+(pointer-only)."* That is deliberate, not a bug. This plugin installs once for your whole
+machine, so its agents are technically reachable from any Claude Code session, in any project —
+and this refusal is what stops one from reading or writing your search by accident when it is
+dispatched from somewhere that is not your job search. It means: this session shows no evidence
+it belongs to your profile — you are not running from your profile directory, and you have not
+told the session which profile to use. Run the command again from your profile directory, or
+from a session that is already part of your job search, and it will proceed normally.
+
 To report a genuine defect, see **[reporting-issues.md](../reporting-issues.md)**.

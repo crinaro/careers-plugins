@@ -23,8 +23,12 @@ attached to a bug report without a second thought. That property only holds if i
 arguments, and by refusing values that look like prose. **A log you have to sanitise before
 sharing is a log nobody shares**, and then the diagnostic value is zero.
 
-Location: `~/.claude/jobsearch/diagnostics.log` — engine-side, not the profile, so it is never
-committed into a private repo and never crosses into the engine repo either.
+Location (dev #151): `<profile>/.jobsearch/diagnostics.log` — per-profile state lives WITH the
+profile, so two profiles on one machine cannot interleave in one file. A context with no
+resolvable profile falls back to `~/.claude/jobsearch/diagnostics.log`, which is machine state.
+The 0.26.0 migration relocates the old machine-global log and gitignores `.jobsearch/`, so the
+log is still never committed anywhere — and it still carries no user data, so either file can
+be pasted into an issue as-is.
 
 ⭐ THE PATH IS OVERRIDABLE — `CLAUDESEARCH_DIAG_LOG`, same shape as `CLAUDESEARCH_LOCK_PATH`
 (GitHub #9). Without this, the regression suite's own migration tests appended straight into
@@ -43,8 +47,25 @@ import os
 import re
 import time
 
-LOG = os.environ.get("CLAUDESEARCH_DIAG_LOG") or os.path.join(
-    os.path.expanduser("~"), ".claude", "jobsearch", "diagnostics.log")
+
+def _default_log():
+    """`<state_root>/diagnostics.log` — per-profile when a genuine profile resolves (dev #151),
+    the machine-global `~/.claude/jobsearch/` fallback otherwise. Resolved once at import: a
+    process serves one profile for its lifetime (an MCP server most of all), and a stable path
+    is what lets `guard_status()` read the same file the writers wrote."""
+    try:
+        import sys
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import _root
+        return os.path.join(_root.state_root(), "diagnostics.log")
+    except Exception:
+        return os.path.join(os.path.expanduser("~"), ".claude", "jobsearch",
+                            "diagnostics.log")
+
+
+LOG = os.environ.get("CLAUDESEARCH_DIAG_LOG") or _default_log()
 MAX_LINES = 500
 
 # A value that is long, or contains spaces plus mixed case, is prose — and prose is where user

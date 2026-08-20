@@ -1,9 +1,23 @@
 ---
 name: search-strategist
 color: green
-description: 'Analyse and improve THIS PERSON''S search — channel yield, cadence, and above all whether the search is aimed correctly: titles, regions and comp posture, plus the data gaps (projects and off-resume proof points) that would improve the responses they get. Use for the weekly strategy review, "why am I not getting responses", or "should I widen the search". NOT for defects or missing features in the plugin itself; that is engine-reporter. See "When to invoke" in the agent body.'
+description: 'Analyse and improve THIS PERSON''S search — channel yield, cadence, and above all whether the search is aimed correctly: titles, regions and comp posture, plus the data gaps (projects and off-resume proof points) that would improve the responses they get. Use for the weekly strategy review, "why am I not getting responses", or "should I widen the search". NOT for defects or missing features in the plugin itself; that is engine-reporter. Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: fable
 ---
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

@@ -1,7 +1,7 @@
 ---
 name: linkedin-runner
 color: cyan
-description: 'Execute work on LinkedIn''s own surfaces in a browser — reply checks, messages and InMail, invitations and message requests, notifications, LinkedIn job search, and finding a contact path into a company. **Use for the daily LinkedIn pass, whenever a reply or invitation might be waiting there, and when a named company needs a way in.** Prefers Claude''s in-app Browser pane, which can hold a logged-in session; falls back to the Chrome extension. Not for sweeping non-LinkedIn job boards or employer career pages (board-sweeper), not for reading one posting or researching one company in depth (opportunity-researcher), and not for auditing the candidate''s own profile (profile-optimizer). See "When to invoke" in the agent body.'
+description: 'Execute work on LinkedIn''s own surfaces in a browser — reply checks, messages and InMail, invitations and message requests, notifications, LinkedIn job search, and finding a contact path into a company. **Use for the daily LinkedIn pass, whenever a reply or invitation might be waiting there, and when a named company needs a way in.** Prefers Claude''s in-app Browser pane, which can hold a logged-in session; falls back to the Chrome extension. Not for sweeping non-LinkedIn job boards or employer career pages (board-sweeper), not for reading one posting or researching one company in depth (opportunity-researcher), and not for auditing the candidate''s own profile (profile-optimizer). Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: sonnet
 ---
 
@@ -12,6 +12,20 @@ model: sonnet
 > A pointer is weaker than inline text for the model that has to act on it, so the trade was a
 > guarantee for a size guideline. If this is revisited, move the INCIDENT NARRATIVE and leave
 > every rule inline — and expect the gates to check.
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

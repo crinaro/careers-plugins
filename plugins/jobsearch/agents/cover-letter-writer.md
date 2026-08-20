@@ -1,9 +1,23 @@
 ---
 name: cover-letter-writer
 color: magenta
-description: 'Write the cover letter that accompanies a formal ATS application — a different artifact from short outreach, with its own header, one-page cap and length target. Use whenever the next action on a role is the candidate applying directly. Not for LinkedIn notes, recruiter replies or networking messages; that is outreach-drafter. Drafts only; never submits. See "When to invoke" in the agent body.'
+description: 'Write the cover letter that accompanies a formal ATS application — a different artifact from short outreach, with its own header, one-page cap and length target. Use whenever the next action on a role is the candidate applying directly. Not for LinkedIn notes, recruiter replies or networking messages; that is outreach-drafter. Drafts only; never submits. Operates only on a configured job-search profile and asserts that binding at entry; not for sessions unrelated to this job search. See "When to invoke" in the agent body.'
 model: sonnet
 ---
+
+## ⛔ BINDING — the first command, before any profile read or write (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py --assert
+```
+
+Exit 0 means this session is bound to a job-search profile by real evidence (the working
+directory is inside it, or `CLAUDESEARCH_ROOT` names it) — proceed. **Any other exit means you
+were dispatched from a context with no evidence it belongs to the profile this machine
+remembers: report the refusal text verbatim as your result and STOP. Do not read or write the
+profile.** If the dispatching session is genuinely the job search but started outside the
+profile directory, it must re-dispatch naming the profile root, and you then prefix every
+command with `CLAUDESEARCH_ROOT=<that root>`.
 
 ## When to invoke
 

@@ -6,6 +6,19 @@ description: 'Run one job-search sweep: mailbox, LinkedIn, sourcing, state updat
 # Daily run
 
 
+## Binding — say which profile this session is acting on (dev #150)
+
+```bash
+~/.claude/jobsearch/run binding.py
+```
+
+One line, before the journal start: it names the profile and the evidence (`cwd`, `env`, or
+`pointer`). Invoking this skill by name is itself evidence of intent, so `pointer` does not
+refuse here — but it is announced, never silent. **`NO PROFILE` (exit 3) means stop and say
+so.** When you later dispatch a jobsearch agent from a `pointer`-bound session, name the
+profile root in the dispatch prompt — agents refuse pointer-only binding, and the prefix
+`CLAUDESEARCH_ROOT=<root>` on their commands is how a legitimate dispatch binds them.
+
 ## ⭐⭐ THE VERY FIRST ACTION OF THE RUN — JOURNAL THE START
 
 ```bash
@@ -105,7 +118,7 @@ hours, costing that morning's run outright.
 ~/.claude/jobsearch/run validate_data.py            # schema · enums · referential integrity
 ~/.claude/jobsearch/run channels_due.py             # which sources are due
 ~/.claude/jobsearch/run check_rule_homes.py         # archived lessons still have a home
-~/.claude/jobsearch/run check_dashboard_fresh.py    # is the dashboard behind its sources?
+~/.claude/jobsearch/run check_dashboard_fresh.py    # dashboard behind its sources, or PUBLISHED view behind the repo (dev #133)
 ~/.claude/jobsearch/run check_engine_purity.py      # engine files carry no profile data
 ~/.claude/jobsearch/run check_pointers.py           # every pointer resolves to real data
 ~/.claude/jobsearch/run knowledge.py                # kb/prep joins resolve; promotion debt; kb files due
@@ -307,7 +320,11 @@ one-off — drop the flag and record.py takes and releases the lock itself, in m
 
 Then: remaining edits to `network.md`; record any new cross-cutting ask in `data/asks.jsonl`
 (kind: role|system — an ask leaves by setting `resolved_on`+`resolution`, never by rewriting
-its text) and any newly confirmed meeting in `data/commitments.jsonl` (date verified from the
+its text). **⭐ A decision ask requesting a specific action on a linked role — "approve
+applying?", "approve this outreach?" — carries `resolves_when` (`application`|`outreach`) plus
+`opp_id`: then `record.py`'s write that records the action resolves the ask in the same locked
+transaction, and no drift window exists (dev #133).** Then any newly confirmed meeting in
+`data/commitments.jsonl` (date verified from the
 .ics, never recall); rewrite `handoff.md` — the letter to the next session; append a `log.md`
 entry. **All mutation belongs in this step and the four below — nothing after
 DASHBOARD may change tracked state.** Keep the window to COMMIT tight; it should be minutes.
@@ -405,6 +422,19 @@ Then **grep the OUTPUT** (`dashboard_artifact.html`) for a distinctive phrase fr
 indistinguishable from one never written. Publish with the Artifact tool on
 `dashboard_artifact.html`, passing `dashboard_artifact_url.txt` as `url` so it redeploys to the
 same artifact; create it if absent. Skip gracefully (and note it) if the tool is unavailable.
+
+**⭐ If the publish reports a VERSION CONFLICT, another session published since you generated
+(dev #133 / public #22). Never pass `force`, and never drop the publish silently:** re-run
+`check_dashboard_fresh.py --fix` (the store is the merge — both racers generate from it) and
+publish again. **After every successful publish, stamp it:**
+
+```bash
+~/.claude/jobsearch/run check_dashboard_fresh.py --stamp-published
+```
+
+The stamp is what lets the next run detect a dropped publish mechanically; a publish that could
+not succeed is a finding the summary states loudly, and the next run's hygiene check will flag
+it regardless — that convergence is the design, so never silence it.
 
 ## 13. SUMMARY
 

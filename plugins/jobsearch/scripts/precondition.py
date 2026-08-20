@@ -64,8 +64,19 @@ The way out of `unresolved` is a human (or the drafting agent) replacing it with
 default direction is deliberate: the cheap error is a draft waiting for a look, the expensive
 one is a blocked draft presented as actionable.
 
+## ⭐ COVER LETTERS ARE COVERED TOO — THE PAIR IS A PAIR EVERYWHERE (dev #169)
+
+This module originally parsed `drafts.md` alone, while `check_sent_drafts.py` and the dashboard
+treated `drafts.md` / `cover_letters.md` as siblings. The consequence was the dangerous half of
+that asymmetry: **a cover letter carrying a send-hold rendered as READY** on the one artifact
+that leaves the building — not blocked, not an error, ready. `FILES` below owns the pair;
+`report()` walks every file in it and tags each row with `file`, so consumers group per file
+instead of assuming everything is a draft. The loudness rules are identical for both files: a
+prose hold is `unresolved`, an unreadable field is `unreadable`, and `--check` fails on either
+wherever it lives.
+
 Usage:
-    python3 precondition.py            # every draft: sendable / blocked / unresolved / unreadable
+    python3 precondition.py            # every entry: sendable / blocked / unresolved / unreadable
     python3 precondition.py --json
     python3 precondition.py --check    # exit 1 on an unparseable or unresolved precondition
 
@@ -109,6 +120,12 @@ NOT_SENDABLE = frozenset({"blocked", "unreadable", "unresolved"})
 # Sentinels used by drafts_with_preconditions for the two non-parse states (see its docstring).
 PROSE_HOLD = "prose-hold"
 UNRESOLVED = "unresolved"
+
+# ⭐ The staged-message pair, owned HERE (dev #169). check_sent_drafts.py already treats these
+# two as siblings; this module and the dashboard did not, which is exactly how a held cover
+# letter rendered as ready. Anything that consumes preconditions iterates THIS tuple rather
+# than assuming drafts.md.
+FILES = ("drafts.md", "cover_letters.md")
 
 # The outreach outcome enum, mirrored from validate_data. Kept as a literal so a precondition
 # naming a value that does not exist is caught here rather than resolving to "never satisfied".
@@ -212,26 +229,32 @@ def drafts_with_preconditions(root, filename="drafts.md"):
     return out
 
 
-def report(root):
+def report(root, filenames=FILES):
+    """Rows for every entry in every file of the pair. Each row carries `file` (dev #169) so a
+    consumer groups per file — two files can legitimately hold same-titled entries."""
     touches = touches_by_contact(root)
     rows = []
-    for title, raw, parsed in drafts_with_preconditions(root):
-        if parsed is None:
-            rows.append({"title": title, "state": "sendable", "why": "no precondition"})
-        elif parsed is PROSE_HOLD:
-            rows.append({"title": title, "state": "unresolved",
-                         "why": "hold phrase in prose but no structured precondition — the "
-                                "pre-0.18.0 form; write `**Blocked until:** contact:<id> "
-                                "outcome:<...>` (or reword the prose if it is not a hold)"})
-        elif parsed is UNRESOLVED:
-            rows.append({"title": title, "state": "unresolved",
-                         "why": "known blocked, precondition not yet structured (%s) — replace "
-                                "with `contact:<id> outcome:<...>`" % raw})
-        elif isinstance(parsed, PreconditionError):
-            rows.append({"title": title, "state": "unreadable", "why": str(parsed)})
-        else:
-            ok, why = resolve(parsed, touches)
-            rows.append({"title": title, "state": "sendable" if ok else "blocked", "why": why})
+    for filename in filenames:
+        for title, raw, parsed in drafts_with_preconditions(root, filename):
+            if parsed is None:
+                rows.append({"file": filename, "title": title, "state": "sendable",
+                             "why": "no precondition"})
+            elif parsed is PROSE_HOLD:
+                rows.append({"file": filename, "title": title, "state": "unresolved",
+                             "why": "hold phrase in prose but no structured precondition — the "
+                                    "pre-0.18.0 form; write `**Blocked until:** contact:<id> "
+                                    "outcome:<...>` (or reword the prose if it is not a hold)"})
+            elif parsed is UNRESOLVED:
+                rows.append({"file": filename, "title": title, "state": "unresolved",
+                             "why": "known blocked, precondition not yet structured (%s) — replace "
+                                    "with `contact:<id> outcome:<...>`" % raw})
+            elif isinstance(parsed, PreconditionError):
+                rows.append({"file": filename, "title": title, "state": "unreadable",
+                             "why": str(parsed)})
+            else:
+                ok, why = resolve(parsed, touches)
+                rows.append({"file": filename, "title": title,
+                             "state": "sendable" if ok else "blocked", "why": why})
     return rows
 
 
@@ -247,12 +270,17 @@ def main():
     if args.json:
         print(json.dumps(rows, indent=1))
     else:
-        print("DRAFT PRECONDITIONS — what can actually be sent right now\n")
-        for r in rows:
-            mark = {"sendable": "✅", "blocked": "⏳", "unreadable": "⛔",
-                    "unresolved": "🚧"}[r["state"]]
-            print("  %s %-10s %s" % (mark, r["state"], r["title"][:72]))
-            print("        %s" % r["why"])
+        print("SEND PRECONDITIONS — what can actually be sent right now\n")
+        for filename in FILES:
+            file_rows = [r for r in rows if r.get("file") == filename]
+            if not file_rows:
+                continue
+            print("  %s" % filename)
+            for r in file_rows:
+                mark = {"sendable": "✅", "blocked": "⏳", "unreadable": "⛔",
+                        "unresolved": "🚧"}[r["state"]]
+                print("    %s %-10s %s" % (mark, r["state"], r["title"][:70]))
+                print("          %s" % r["why"])
         n_send = sum(1 for r in rows if r["state"] == "sendable")
         n_block = sum(1 for r in rows if r["state"] == "blocked")
         n_unres = sum(1 for r in rows if r["state"] == "unresolved")
@@ -272,7 +300,8 @@ def main():
     if args.check:
         bad = [r for r in rows if r["state"] in ("unreadable", "unresolved")]
         for r in bad:
-            print("⛔ %s [%s]: %s" % (r["title"][:60], r["state"], r["why"]), file=sys.stderr)
+            print("⛔ %s › %s [%s]: %s" % (r.get("file", "?"), r["title"][:60],
+                                           r["state"], r["why"]), file=sys.stderr)
         return 1 if bad else 0
     return 0
 

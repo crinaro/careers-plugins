@@ -300,6 +300,62 @@ def archived_prep_rows(root, cids, chids):
     return rows
 
 
+def prep_exists_for(root, company_id):
+    """⭐ THE FULL SET OF DURABLE STORES PREP MATERIAL CAN LIVE IN (dev #153).
+
+    Before this, the daily-run guard only ran `ls call_preps/` — so prep material that had
+    already been PROMOTED into `kb/<company_id>.md` (this module's own `**Promoted:**` flow,
+    the accumulation `report()` above already tracks) read as "nothing written yet" and got
+    re-promised as owed across multiple runs. There are exactly THREE places prep for one
+    company can be sitting, all of them already known to this module because it resolves
+    joins against every one of them:
+
+      1. `kb/<company_id>.md`     — promoted durable knowledge (kb_rows)
+      2. `call_preps/*.md`        — a live, not-yet-archived dated note (prep_rows)
+      3. `archive/call-preps/*.md` (and the legacy `archive/call_preps/` spelling) — an
+         already-archived dated note (archived_prep_rows / ARCHIVE_DIRS)
+
+    Established by reading this module end to end, not guessed: `report()` already builds
+    rows from all three, and `pursuit_rows()` already leans on `kb_rows`'s `joined` set as
+    the authority for "does this company have somewhere prep accumulates." Adding `kb/` and
+    stopping there would have been the SAME defect one file later — the register's own
+    warning — so this checks all three, and stays the one place that decides "has this
+    company's prep already been written," so a future fourth store only needs adding HERE.
+
+    A kb file counts only non-empty (an empty `kb/<id>.md` was never actually written into).
+    A call-prep note (live or archived) counts if a `company:<company_id>` token appears
+    anywhere in its `**Companies:**` line — deliberately not requiring the WHOLE line to
+    resolve cleanly, so one unreadable id alongside a valid one doesn't hide a real hit.
+
+    Returns the list of relative paths that already carry this company's prep (empty = no
+    existing prep found anywhere; a guard treats that, and only that, as "still owed").
+    """
+    hits = []
+    kb_path = os.path.join(root, "kb", company_id + ".md")
+    if os.path.isfile(kb_path):
+        try:
+            if _read(kb_path).strip():
+                hits.append(os.path.join("kb", company_id + ".md"))
+        except OSError:
+            pass
+
+    needle = re.compile(r"\bcompany\s*:\s*" + re.escape(company_id) + r"\b", re.I)
+    prep_dirs = [os.path.join(root, "call_preps")] + [os.path.join(root, d) for d in ARCHIVE_DIRS]
+    for d in prep_dirs:
+        rel_dir = os.path.relpath(d, root)
+        for name in sorted(os.listdir(d)) if os.path.isdir(d) else []:
+            if not name.endswith(".md"):
+                continue
+            try:
+                md = _read(os.path.join(d, name))
+            except OSError:
+                continue
+            m = PREP_FIELD_RE.search(md)
+            if m and needle.search(m.group(1)):
+                hits.append(os.path.join(rel_dir, name))
+    return hits
+
+
 def pursuit_rows(root, joined):
     """An active pursuit in conversation must have a kb file to accumulate into."""
     rows = []
@@ -333,7 +389,27 @@ def main():
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--check", action="store_true",
                     help="exit 1 if any join or promotion is unreadable or unresolved")
+    ap.add_argument("--prep-exists", metavar="COMPANY_ID",
+                    help="before promising a call-prep note, ask whether one already exists "
+                         "for this company — checks kb/, call_preps/, and archive/call-preps/ "
+                         "(dev #153). Exit 0 with the hit(s) if any store already carries it; "
+                         "exit 0 with nothing found otherwise — the caller decides what an "
+                         "absence means, this only answers the query.")
     args = ap.parse_args()
+
+    if args.prep_exists:
+        root = profile_root()
+        hits = prep_exists_for(root, args.prep_exists)
+        if hits:
+            print("Prep already exists for %s:" % args.prep_exists)
+            for h in hits:
+                print("  ✅ %s" % h)
+            print("\nLink to the file(s) above — do not promise a new prep note.")
+        else:
+            print("No existing prep found for %s in kb/, call_preps/, or "
+                  "archive/call-preps/." % args.prep_exists)
+            print("A call-prep note is genuinely still owed.")
+        return 0
 
     rows = report(profile_root())
     if args.json:

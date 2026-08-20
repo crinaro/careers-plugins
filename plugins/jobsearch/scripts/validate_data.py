@@ -355,6 +355,13 @@ def main():
         enum(r, "review_cadence", CADENCES, label, problems)
         if "access" in r:
             enum(r, "access", ACCESS, label, problems)
+        # alert_sweep.py ORs this across every non-retired channel that sets it (dev #147) —
+        # an empty or non-string value would silently drop out of that OR clause and look like
+        # "no alerts from this source" rather than a malformed field.
+        if "alert_sender" in r and r.get("alert_sender") is not None:
+            if not isinstance(r.get("alert_sender"), str) or not r.get("alert_sender").strip():
+                problems.append("%s: alert_sender present but not a non-empty string — %r"
+                                % (label, r.get("alert_sender")))
         lr = r.get("last_reviewed")
         if lr is not None and not is_date(lr):
             problems.append("%s: last_reviewed not ISO or null — %r" % (label, lr))

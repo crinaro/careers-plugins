@@ -24,6 +24,29 @@ guards its stdio loop under __main__). Same coverage guarantee: EVERY configured
 account by default, and an unreachable account is a LOUD banner, never a silent zero —
 so this can never conclude "no alerts" from a one-mailbox view.
 
+⭐ THE SENDER LIST COMES FROM data/channels.jsonl, NOT A CONSTANT (GitHub #147, dev #147)
+------------------------------------------------------------------------------------------
+This used to hardcode `from:indeed OR from:linkedin OR ...` as a Python constant. Retiring an
+aggregator channel in the store (`relationship_status: retired`, the same field
+`channels_due.py` already honors) had NO EFFECT on this sweep — the retirement decision and
+the sweep's source list lived in two disconnected places, so a dead source kept surfacing
+digests forever. That is the standing rule about shipping a version rather than an
+instruction, pointed at configuration: **retiring a channel must stop the sweep with no
+engine code edit.**
+
+Each channel that produces alert-digest emails now carries its own `alert_sender` field (the
+Gmail search fragment for THAT channel's From address, e.g. `from:indeed`) — see
+`docs/schema.md`. `_channel_senders()` below collects every non-retired channel's
+`alert_sender` and ORs them together. A channel with no `alert_sender` (a recruiter, a
+company-site channel reviewed by direct search, ...) is simply not an alert-digest source and
+is silently skipped — that is correct, not a gap.
+
+The one piece that stayed a script constant: `SUBJECT_FALLBACK`, a generic subject match for
+digests whose From address varies (rotating subdomains, ESP relays). That is a fact about how
+alert digests are IDENTIFIED in general, not a fact any one channel's record could hold — no
+channel "owns" it — so moving it into the store would invent a field with nothing to key it
+to. Only the sender list was ever channel-specific; the subject fallback stays here.
+
 Usage:
     python3 scripts/alert_sweep.py                 # last 1 day (the daily default)
     python3 scripts/alert_sweep.py --days 2        # widen the window
@@ -33,12 +56,16 @@ Python 3.9+. Standard library only.
 """
 
 import argparse
+import json
 import os
 import sys
 
-# scripts/ is on sys.path[0] when run as `python3 scripts/alert_sweep.py`,
-# so the sibling server module imports cleanly. Its main() is __main__-guarded,
-# so importing it starts no stdio loop.
+# scripts/ is on sys.path[0] when run as `python3 scripts/alert_sweep.py`, so sibling modules
+# import cleanly. gmail_mcp_server's main() is __main__-guarded, so importing it starts no
+# stdio loop.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from _root import profile_root as _profile_root
+
 try:
     from gmail_mcp_server import (
         Mailbox, configured_accounts, decode_header_value, CredentialError,
@@ -49,18 +76,47 @@ except ImportError as exc:  # pragma: no cover - defensive
         "Run this as `python3 scripts/alert_sweep.py` from the repo root.\n" % exc)
     sys.exit(2)
 
-# The alert artifacts we sweep for. Sender-first (robust to subject wording), plus
-# a subject fallback for digests whose From varies. Extend as new sources appear —
-# same discipline as the ATS-receipt domain list in CLAUDE.md.
-ALERT_QUERY = (
-    'from:indeed OR from:linkedin OR from:dice OR from:careerbuilder '
-    'OR from:ladders OR from:ziprecruiter '
-    'OR subject:("new jobs" OR "jobs for you" OR "job alert" OR "new job")'
-)
+# Generic digest fallback — deliberately NOT channel state (see the module docstring's #147
+# section for why). Extend as new identifying patterns appear.
+SUBJECT_FALLBACK = 'subject:("new jobs" OR "jobs for you" OR "job alert" OR "new job")'
 
 
-def build_query(days):
-    return "(%s) newer_than:%dd" % (ALERT_QUERY, days)
+def _channel_senders(root=None):
+    """Every non-retired channel's `alert_sender`, from data/channels.jsonl.
+
+    A missing or unreadable channels.jsonl yields no senders rather than raising — an empty
+    profile (or one mid-scaffold) must not crash the sweep; the subject fallback alone still
+    runs. A channel with `relationship_status: retired` is excluded even if `alert_sender` is
+    still set on the row (the field records history; retirement is what silences it) — the
+    exact behavior dev #147 asked for: retiring a channel stops the sweep with no code edit.
+    """
+    path = os.path.join(root or _profile_root(), "data", "channels.jsonl")
+    senders = []
+    try:
+        fh = open(path, encoding="utf-8")
+    except OSError:
+        return senders
+    with fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            sender = row.get("alert_sender")
+            if not sender:
+                continue
+            if row.get("relationship_status") == "retired":
+                continue
+            senders.append(sender)
+    return senders
+
+
+def build_query(days, root=None):
+    parts = _channel_senders(root) + [SUBJECT_FALLBACK]
+    return "(%s) newer_than:%dd" % (" OR ".join(parts), days)
 
 
 def sweep_account(account, query):

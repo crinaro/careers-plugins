@@ -67,6 +67,98 @@ def as_date(s):
         return None
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ONE DEFINITION of sourcing-channel review state and channel yield — dev #148.
+#
+# This logic used to live inline in main(), which made this script the ONLY surface that
+# could answer "which channels are due, and what has each one produced?" — the strategy
+# review's central question, reachable by CLI alone while the dashboard rendered none of it.
+# generate_dashboard.py now imports these two functions rather than re-deriving them (the
+# same single-owner rule your_move.py establishes for Your Move membership: a consumer that
+# re-derives a classification eventually disagrees with it).
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Review states, in the order a strategy review reads them.
+REVIEW_STATES = ("due", "current", "on-inbound", "unscheduled", "retired")
+
+
+def review_rows(chans, today):
+    """[(channel, state, detail)] for every SOURCING channel (recruiter/referral
+    relationship channels are excluded — they are reviewed on-inbound and live on the
+    Network surface, not the sourcing queue).
+
+    state ∈ REVIEW_STATES; detail is a dict:
+        next_due   ISO date the next review is due (None where no schedule applies)
+        days_over  int, only when state == "due" and a due date exists
+        why        one human-readable line ("never reviewed", "due 2026-08-10 (3 days over)",
+                   the unrecognized-cadence warning, ...)
+
+    ⚠️ An unrecognized cadence is state "unscheduled", never a silent skip — the 2026-08-02
+    incident: "monthly" was set in data before CADENCE_DAYS knew it, and `if not d: continue`
+    dropped the channel from the queue while everything read as full coverage.
+    """
+    rows = []
+    for c in chans:
+        if c.get("type") in ("recruiter", "referral"):
+            continue
+        if c.get("relationship_status") == "retired":
+            rows.append((c, "retired", {"next_due": None, "why": "retired — deliberately "
+                                        "no longer reviewed or swept"}))
+            continue
+        cad = c.get("review_cadence")
+        d = CADENCE_DAYS.get(cad)
+        if not d:
+            if cad == "on-inbound":
+                rows.append((c, "on-inbound",
+                             {"next_due": None, "why": "reviewed on inbound — no schedule "
+                              "by design"}))
+            else:
+                rows.append((c, "unscheduled",
+                             {"next_due": None, "why": "unrecognized review_cadence %r — "
+                              "NOT being scheduled. Add it to CADENCE_DAYS." % (cad,)}))
+            continue
+        lr = as_date(c.get("last_reviewed"))
+        if lr is None:
+            rows.append((c, "due", {"next_due": None, "why": "never reviewed"}))
+            continue
+        due_date = lr + datetime.timedelta(days=d)
+        if due_date <= today:
+            days_over = (today - due_date).days
+            rows.append((c, "due", {"next_due": due_date.isoformat(),
+                                    "days_over": days_over,
+                                    "why": "due %s%s" % (due_date.isoformat(),
+                                           " (%d days over)" % days_over
+                                           if days_over else "")}))
+        else:
+            rows.append((c, "current", {"next_due": due_date.isoformat(),
+                                        "why": "next %s" % due_date.isoformat()}))
+    return rows
+
+
+def channel_yield(opps, since=None):
+    """{channel_id: {"sightings": n, "pursued": n}} from opportunities' sightings[] —
+    a QUERY of the records, never a hand-derived summary. `since` (datetime.date) windows
+    it; None counts all-time. Raw counts on purpose: funnel_report.py owns the refusal to
+    print a rate below MIN_SAMPLE, and this returns numerators only."""
+    out = {}
+    for o in opps:
+        pursued = (o.get("verdict") == "pursue"
+                   or o.get("status") in ("active-pursuit", "needs-resolution"))
+        for sg in o.get("sightings") or []:
+            cid = sg.get("channel_id")
+            if not cid:
+                continue
+            if since is not None:
+                sd = as_date(sg.get("seen_on"))
+                if sd is None or sd < since:
+                    continue
+            row = out.setdefault(cid, {"sightings": 0, "pursued": 0})
+            row["sightings"] += 1
+            if pursued:
+                row["pursued"] += 1
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--stamp", metavar="ID")
@@ -93,25 +185,16 @@ def main():
         return 0
 
     if args.yield_since:
-        import json as _j, os as _os
         since = as_date(args.yield_since)
-        opps = [_j.loads(l) for l in open(_os.path.join(DATA, "opportunities.jsonl"), encoding="utf-8") if l.strip()]
         labels = {c["id"]: c.get("label", c["id"]) for c in chans}
-        counts, pursued = {}, {}
-        for o in opps:
-            for sg in o.get("sightings", []):
-                sd = as_date(sg.get("seen_on"))
-                if sd and since and sd >= since:
-                    cid = sg["channel_id"]
-                    counts[cid] = counts.get(cid, 0) + 1
-                    if o.get("verdict") == "pursue" or o.get("status") in ("active-pursuit", "needs-resolution"):
-                        pursued[cid] = pursued.get(cid, 0) + 1
+        counts = channel_yield(load_opps(), since=since)
         print("Channel yield since %s — new sightings / of-which-pursued" % args.yield_since)
         print("=" * 60)
         if not counts:
             print("  No new sightings recorded in the window yet.")
-        for cid, n in sorted(counts.items(), key=lambda x: -x[1]):
-            print("  %-28s %d new / %d pursued" % (labels.get(cid, cid)[:28], n, pursued.get(cid, 0)))
+        for cid, row in sorted(counts.items(), key=lambda x: -x[1]["sightings"]):
+            print("  %-28s %d new / %d pursued" % (labels.get(cid, cid)[:28],
+                                                   row["sightings"], row["pursued"]))
         print("\n  Decision rule (Dice/Indeed/CareerBuilder trial, ~2026-08-03): a bot-limited")
         print("  source earning 0 pursued that direct LinkedIn/ATS + recruiters didn't already")
         print("  surface is not worth the friction — drop it.")
@@ -120,39 +203,22 @@ def main():
     today = as_date(args.today) or datetime.date.today()
     print("Channel review queue — as of %s\n" % today.isoformat())
 
-    due, upcoming = [], []
-    retired = []
-    for c in chans:
-        if c.get("type") in ("recruiter", "referral"):
-            continue
-        # A retired channel stays in the file (its sighting history must keep resolving for
-        # validate_data.py and funnel_report.py) but must never be queued for review again.
-        # Added 2026-08-02 with the Dice/CareerBuilder retirement — without this the status
-        # field was decorative and the dead sources kept appearing in the sourcing queue.
-        if c.get("relationship_status") == "retired":
+    # Classification is review_rows()'s alone — dev #148. A retired channel stays in the
+    # file (its sighting history must keep resolving for validate_data.py and
+    # funnel_report.py) but must never be queued for review again (2026-08-02, the
+    # Dice/CareerBuilder retirement); an unrecognized cadence must WARN, not silently skip.
+    due, upcoming, retired = [], [], []
+    for c, state, detail in review_rows(chans, today):
+        if state == "retired":
             retired.append(c)
-            continue
-        cad = c.get("review_cadence")
-        d = CADENCE_DAYS.get(cad)
-        if not d:
-            # Never drop a channel silently just because its cadence is unrecognized —
-            # that reads as coverage. on-inbound has no schedule by design; anything
-            # else is a real misconfiguration and must be visible. (2026-08-02)
-            if cad != "on-inbound":
-                print("  !! WARNING: channel %r has unrecognized review_cadence %r — "
-                      "NOT being scheduled. Add it to CADENCE_DAYS." % (c["id"], cad))
-            continue
-        lr = as_date(c.get("last_reviewed"))
-        if lr is None:
-            due.append((c, "never reviewed"))
-            continue
-        due_date = lr + datetime.timedelta(days=d)
-        if due_date <= today:
-            days_over = (today - due_date).days
-            due.append((c, "due %s%s" % (due_date.isoformat(),
-                        " (%d days over)" % days_over if days_over else "")))
-        else:
-            upcoming.append((c, due_date))
+        elif state == "due":
+            due.append((c, detail["why"]))
+        elif state == "current":
+            upcoming.append((c, datetime.date.fromisoformat(detail["next_due"])))
+        elif state == "unscheduled":
+            print("  !! WARNING: channel %r has unrecognized review_cadence %r — "
+                  "NOT being scheduled. Add it to CADENCE_DAYS."
+                  % (c["id"], c.get("review_cadence")))
 
     print("=" * 68)
     print("DUE NOW — review by DIRECT SEARCH on the source, then --stamp it")

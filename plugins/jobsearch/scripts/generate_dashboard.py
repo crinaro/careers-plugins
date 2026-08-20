@@ -4,7 +4,10 @@
 Deterministic, zero-token rendering: the model maintains data/*.jsonl (and the few
 human-facing .md artifacts — drafts, cover letters, network); this script assembles the
 dashboard HTML. Since dev #93 focus.md is not read at all: Your Move and This Week are
-views of data/asks.jsonl, data/commitments.jsonl, opportunities.jsonl and channels.jsonl.
+views of data/asks.jsonl, data/commitments.jsonl, opportunities.jsonl and channels.jsonl —
+plus, since dev #154, the staged-message pair (drafts.md / cover_letters.md via
+precondition.report) for the ready-no-ask group; the Sourcing tab (dev #148) is a view of
+channels.jsonl + opportunities.jsonl sightings through channels_due.py's derivations.
 
 Usage: python3 scripts/generate_dashboard.py   (run from the profile folder root)
 Output: dashboard.html in the folder root.
@@ -878,6 +881,98 @@ def firms_from_channels():
     return headers, rows
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# SOURCING STRATEGY — dev #148 (GitHub issue #148).
+#
+# The dashboard read channels.jsonl for the Network firms table and the Your Move touch
+# queue, but never the fields a STRATEGY REVIEW runs on: relationship_status (active vs
+# retired), review_cadence / last_reviewed / next-due, access (the route), and yield. That
+# one view was reachable only by running channels_due.py / funnel_report.py by hand —
+# a field-level gap invisible to any file-level scan, because this file already named the
+# store. Classification and yield are channels_due.py's ONE definition (review_rows /
+# channel_yield); this only renders what they say — the your_move.py single-owner rule.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def sourcing_view(today=None):
+    """(active_rows, retired_rows, n_due) for the Sourcing tab.
+
+    active_rows: (label, scope, route, cadence, last_reviewed, due_html, yield_text, is_due)
+    retired_rows: (label, scope, yield_text)."""
+    import channels_due as _cd
+    chans = load_jsonl("channels.jsonl")
+    yields = _cd.channel_yield(load_jsonl("opportunities.jsonl"))
+    today = today or datetime.date.today()
+    active, retired, n_due = [], [], 0
+
+    def _yield_text(cid):
+        y = yields.get(cid)
+        if not y:
+            return "—"
+        return "%d sighting%s · %d pursued" % (y["sightings"],
+                                               "" if y["sightings"] == 1 else "s",
+                                               y["pursued"])
+
+    for c, state, detail in _cd.review_rows(chans, today):
+        label = c.get("label") or c.get("id") or "?"
+        scope = c.get("scope_notes") or ""
+        ytxt = _yield_text(c.get("id"))
+        if state == "retired":
+            retired.append((label, scope, ytxt))
+            continue
+        route = " · ".join(b for b in (c.get("type"), c.get("access")) if b) or "—"
+        cadence = c.get("review_cadence") or "—"
+        lr = c.get("last_reviewed") or "never"
+        if state == "due":
+            n_due += 1
+            due_html = ('<span class="chip action">due now</span> '
+                        '<span class="sub">%s</span>' % esc(detail["why"]))
+        elif state == "current":
+            due_html = '<span class="chip scheduled">%s</span>' % esc(detail["next_due"])
+        elif state == "on-inbound":
+            due_html = '<span class="chip waiting">on inbound</span>'
+        else:  # unscheduled — a misconfiguration, loud on the page as in the CLI
+            due_html = ('<span class="chip action">⚠️ unscheduled</span> '
+                        '<span class="sub">%s</span>' % esc(detail["why"]))
+        active.append((label, scope, route, cadence, lr, due_html, ytxt))
+    return active, retired, n_due
+
+
+def render_sourcing_tables(active, retired):
+    """(active_table_html, retired_html). Hand-rendered (not render_table) because the
+    next-due cell carries chip HTML that md_inline would escape."""
+    if active:
+        out = ["<table><tr>"]
+        for h in ("Channel", "Route", "Cadence", "Last reviewed", "Next review", "Yield"):
+            out.append("<th>%s</th>" % h)
+        out.append("</tr>")
+        for label, scope, route, cadence, lr, due_html, ytxt in active:
+            name = "<strong>%s</strong>" % esc(label)
+            if scope:
+                name += '<div class="sub">%s</div>' % esc(scope)
+            out.append("<tr>" + "".join(
+                "<td>%s</td>" % cell
+                for cell in (name, esc(route), esc(cadence), esc(lr), due_html, esc(ytxt)))
+                + "</tr>")
+        out.append("</table>")
+        active_html = "".join(out)
+    else:
+        active_html = '<div class="sub">No sourcing channels on file yet.</div>'
+
+    if retired:
+        rows = []
+        for label, scope, ytxt in retired:
+            rows.append('<tr><td><strong>%s</strong>%s</td>'
+                        '<td><span class="chip closed">retired</span></td><td>%s</td></tr>'
+                        % (esc(label),
+                           '<div class="sub">%s</div>' % esc(scope) if scope else "",
+                           esc(ytxt)))
+        retired_html = ("<table><tr><th>Channel</th><th>Status</th><th>Lifetime yield</th>"
+                        "</tr>%s</table>" % "".join(rows))
+    else:
+        retired_html = '<div class="sub">No retired channels.</div>'
+    return active_html, retired_html
+
+
 SUBMITTED_STATES = ("submitted", "acknowledged", "interviewing", "offer")
 
 
@@ -1341,26 +1436,76 @@ def main():
     # under "awaiting your approval to send". The set of states that must never read as "needs
     # you" is precondition.py's to own; this only consumes it. A draft the resolver did not
     # report at all still defaults to sendable — that is the render-over-grouping fallback above.
+    # ⭐ dev #169 — rows are keyed by (file, title), because precondition.py now covers the whole
+    # staged-message pair (drafts.md AND cover_letters.md, its FILES tuple). Keying by title
+    # alone would let a draft's state answer for a same-titled cover letter.
     try:
         import precondition as _pre
-        _states = {r["title"]: r for r in _pre.report(str(ROOT))}
+        _pre_rows = _pre.report(str(ROOT))
+        _states = {(r.get("file", "drafts.md"), r["title"]): r for r in _pre_rows}
         _not_sendable = _pre.NOT_SENDABLE
     except Exception:
-        _states, _not_sendable = {}, frozenset()
-    _sendable = [d for d in drafts
-                 if _states.get(d[0], {}).get("state") not in _not_sendable]
-    _blocked = [d for d in drafts if _states.get(d[0], {}).get("state") in _not_sendable]
+        _pre_rows, _states, _not_sendable = [], {}, frozenset()
+
+    # ⭐ dev #154 — a READY staged message no open ask covers gets a DERIVED queue line, so
+    # it can never again read as "nothing is waiting". Membership is your_move.py's
+    # (ready_staged_without_ask over precondition.report): only state `sendable` qualifies —
+    # a held message belongs to the held sections (dev #169), a sent one has no `## ` entry
+    # left (the sent-and-logged rule), and a draft an open ask already covers renders via
+    # the ask instead (one item, one section — the duplication dev #142's reporter hit).
+    # ⛔ Never auto-creates an ask: the line is a view of the drafts store, and it leaves by
+    # itself when the store changes. Same fallback direction as _states above.
+    try:
+        _ready_rows = _ym.ready_staged_without_ask(str(ROOT), pre_rows=_pre_rows)
+    except Exception:
+        _ready_rows = []
+    _ready_items = [("✉️ %s" % r["title"],
+                     "Approve and send — staged in %s and cleared to go; no open ask "
+                     "points at it. The full text is in the panel below." % r["file"], None)
+                    for r in _ready_rows]
+    your_move_ready_html = ""
+    if _ready_items:
+        your_move_ready_html = (
+            '<h2 style="font-size:16px;margin-top:22px">✉️ Ready to send — staged, no ask '
+            'on file <span class="tcount">%d</span></h2>'
+            '<div class="sub" style="margin:-6px 0 10px">Fully written, every send-'
+            'precondition met, and no open ask points at it — derived straight from the '
+            'staged files, so a ready reply can never sit invisible again. Sending it (and '
+            'logging the send), or recording the ask that owns it, removes the line by '
+            'itself.</div>'
+            '<div class="card">%s</div>'
+            % (len(_ready_items), render_your_move(_ready_items)))
+
+    def _pre_state(filename, title):
+        return _states.get((filename, title), {}).get("state")
+
+    _sendable = [d for d in drafts if _pre_state("drafts.md", d[0]) not in _not_sendable]
+    _blocked = [d for d in drafts if _pre_state("drafts.md", d[0]) in _not_sendable]
     drafts_html = render_draft_entries(_sendable, "No pending drafts.")
     blocked_html = render_draft_entries(_blocked, "")
     n_blocked = len(_blocked)
-    _blocked_why = {t: _states.get(t, {}).get("why", "") for t, _ in _blocked}
+    _blocked_why = {t: _states.get(("drafts.md", t), {}).get("why", "") for t, _ in _blocked}
 
     # ⭐ ONE LIST, NOT FIVE. See render_opportunity_list for why.
     _opp_rows = load_jsonl("opportunities.jsonl")
     _opp_comps = {c["id"]: c for c in load_jsonl("companies.jsonl")}
     opp_list_html, opp_counts = render_opportunity_list(_opp_rows, _opp_comps)
 
-    covers_html = render_draft_entries(covers, "No cover letters pending.")
+    # ⭐ dev #169 — the covers panel consults preconditions exactly as the drafts panel does.
+    # Before this, a cover letter carrying a send-hold rendered as READY on the outward-facing
+    # artifact: the sendable/blocked split was applied to drafts alone. Same grouping rule:
+    # membership in precondition.NOT_SENDABLE, never a literal state comparison (issue #13).
+    _covers_ready = [c for c in covers if _pre_state("cover_letters.md", c[0]) not in _not_sendable]
+    _covers_held = [c for c in covers if _pre_state("cover_letters.md", c[0]) in _not_sendable]
+    covers_html = render_draft_entries(_covers_ready, "No cover letters pending.")
+    covers_held_html = render_draft_entries(_covers_held, "")
+    n_covers_held = len(_covers_held)
+
+    # dev #148 — the sourcing strategy surface, derived from channels.jsonl +
+    # opportunities.jsonl sightings via channels_due.py's one definition.
+    _src_active, _src_retired, n_sourcing_due = sourcing_view()
+    sourcing_active_html, sourcing_retired_html = render_sourcing_tables(_src_active,
+                                                                          _src_retired)
 
     # GitHub #94 — the durable knowledge artifacts, rendered as CONTENT, not filename chips.
     _preps, _kbs = knowledge_docs()
@@ -1527,12 +1672,14 @@ def main():
   #tab-week:checked    ~ .tabbar label[for="tab-week"],
   #tab-actions:checked ~ .tabbar label[for="tab-actions"],
   #tab-jobs:checked    ~ .tabbar label[for="tab-jobs"],
+  #tab-sourcing:checked ~ .tabbar label[for="tab-sourcing"],
   #tab-know:checked    ~ .tabbar label[for="tab-know"],
   #tab-network:checked ~ .tabbar label[for="tab-network"] {
       color: var(--fg); border-bottom-color: var(--accent, #c96442); background: transparent; }
   #tab-week:checked    ~ .panel-week,
   #tab-actions:checked ~ .panel-actions,
   #tab-jobs:checked    ~ .panel-jobs,
+  #tab-sourcing:checked ~ .panel-sourcing,
   #tab-know:checked    ~ .panel-know,
   #tab-network:checked ~ .panel-network { display: block; }
   .tabpanel > h2:first-child { margin-top: 0; }
@@ -1641,7 +1788,8 @@ def main():
           border-radius: 4px; padding: 4px 10px; margin: 4px 0; font-size: 13px; }
 """
     n_drafts = len(_sendable)
-    n_covers = len(covers)
+    # dev #169 — only READY covers count as "needs you"; a held one is not the candidate's move.
+    n_covers = len(_covers_ready)
     _sub, _hum, _noth = application_tables()
     n_submitted, n_human, n_nothing = len(_sub), len(_hum), len(_noth)
     # dev #142 — an owed pursue/pass decision counts on the tab badge like any other item
@@ -1656,12 +1804,14 @@ def main():
 <input type="radio" name="dtab" id="tab-week" checked>
 <input type="radio" name="dtab" id="tab-actions">
 <input type="radio" name="dtab" id="tab-jobs">
+<input type="radio" name="dtab" id="tab-sourcing">
 <input type="radio" name="dtab" id="tab-know">
 <input type="radio" name="dtab" id="tab-network">
 <div class="tabbar">
   <label for="tab-week">📅 This Week<span class="tcount">{n_week}</span></label>
   <label for="tab-actions">⚡ Your Move<span class="tcount">{n_move + n_needs + n_drafts + n_covers}</span></label>
   <label for="tab-jobs">🎯 Opportunities<span class="tcount">{len(live_rows)}</span></label>
+  <label for="tab-sourcing">🧭 Sourcing<span class="tcount">{n_sourcing_due}</span></label>
   <label for="tab-know">📚 Knowledge<span class="tcount">{n_knowledge}</span></label>
   <label for="tab-network">🤝 Network</label>
 </div>
@@ -1685,6 +1835,7 @@ def main():
   <h2>⚡ Decisions &amp; actions waiting on you</h2>
   <div class="sub" style="margin:-6px 0 10px"><strong>What lives here:</strong> job-search actions blocked on you — each line is a question or an ask. Once it\u2019s answered it leaves this list entirely, rather than becoming a \u201cdone\u201d note. System and tooling items now sit in their own group just below, not on a separate tab.</div>
   <div class="ym-card"><div class="ym-head">Nothing here moves without you</div>{your_move_html}</div>
+  {your_move_ready_html}
   {your_move_decide_html}
   {your_move_callouts_html}
   <h2 style="font-size:16px;margin-top:22px">⚙️ System &amp; tooling — needs you <span class="tcount">{n_needs}</span></h2>
@@ -1697,6 +1848,7 @@ def main():
   <h2>📄 Cover letters — for applications you submit yourself</h2>
   <div class="sub" style="margin:-6px 0 10px">The “why this role is a fit” message that goes with an ATS application. Every claim traces to resume.md. You paste and submit these yourself — nothing is applied on your behalf.</div>
   <div class="card">{covers_html}</div>
+  {'<h2 style="font-size:16px;margin-top:22px">⏳ Cover letters held — do not submit yet <span class="tcount">' + str(n_covers_held) + '</span></h2><div class="sub" style="margin:-6px 0 10px">Written, but carrying a send-precondition that is not met (or not yet structured). <strong>Not ready to submit</strong> — each moves to the list above by itself once its precondition resolves.</div><div class="card">' + covers_held_html + '</div>' if n_covers_held else ''}
 </div>
 
 <div class="tabpanel panel-jobs">
@@ -1724,6 +1876,28 @@ def main():
   Applied and in-play-through-a-person are both covered; a role carried with nothing sent is the
   hole. <strong>Cover letter</strong> appears under a role only when it was confirmed —
   <code>unrecorded</code> means nobody asked, and it is never guessed.</div>
+</div>
+
+<div class="tabpanel panel-sourcing">
+  <h2>🧭 Sourcing strategy — where roles come from, and whether each source is working</h2>
+  <div class="sub" style="margin:-6px 0 10px"><strong>What lives here:</strong> the sourcing
+  channels as data — status, route, review cadence, when each was last reviewed and when the
+  next review is due, and what each has actually yielded. This is the view a strategy review
+  runs on; it used to be reachable only by running <code>channels_due.py</code> and
+  <code>funnel_report.py</code> by hand. Recruiter and referral relationships live on the
+  Network tab.</div>
+  <h2 style="font-size:16px;margin-top:18px">Active channels <span class="tcount">{len(_src_active)}</span></h2>
+  <div class="card">{sourcing_active_html}</div>
+  <h2 style="font-size:16px;margin-top:18px">Retired channels <span class="tcount">{len(_src_retired)}</span></h2>
+  <div class="card">{sourcing_retired_html}</div>
+  <div class="note"><strong>Retiring a channel is one decision with two effects:</strong> it
+  leaves the review queue and the alert sweep stops reading its alert digests — both consult
+  <code>relationship_status</code> in <code>data/channels.jsonl</code>, so no engine edit is
+  involved. The channel record and its sighting history stay on file. Review a due channel by
+  direct search on the source&rsquo;s own job pages, then stamp it:
+  <code>python3 scripts/channels_due.py --stamp &lt;id&gt;</code>. Yield counts are raw
+  (sightings / of-which-pursued); <code>funnel_report.py</code> owns rates and refuses small
+  samples.</div>
 </div>
 
 <div class="tabpanel panel-know">
@@ -1767,8 +1941,10 @@ def main():
     (ROOT / "dashboard_artifact.html").write_text(artifact_doc, encoding="utf-8")
 
     print(f"Wrote dashboard.html ({len(doc)} bytes) and dashboard_artifact.html ({len(artifact_doc)} bytes), "
-          f"{n_move} Your Move items ({n_needs} system asks), {n_week} This Week commitments, "
+          f"{n_move} Your Move items ({n_needs} system asks, {len(_ready_items)} ready staged), "
+          f"{n_week} This Week commitments, "
           f"{len(srows2)} sourced ({len(live_rows)} active / {len(closed_rows)} closed), "
+          f"{len(_src_active)} sourcing channels ({n_sourcing_due} due, {len(_src_retired)} retired), "
           f"{len(frows)} firm rows, {len(arows)} alumni rows")
 
 

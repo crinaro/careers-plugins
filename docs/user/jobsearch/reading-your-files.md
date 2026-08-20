@@ -23,12 +23,39 @@ All paths are inside **your profile directory** (the private folder you created 
 | `kb/<company>.md` | durable knowledge about one company, e.g. `kb/acme-health.md` | markdown |
 | `call_preps/call_prep_<date>.md` | prep notes for a scheduled call, e.g. `call_prep_2026-01-15.md` | markdown |
 | `drafts.md` | staged outreach messages awaiting your review | markdown |
-| `cover_letters.md` | cover letters awaiting your review | markdown |
+| `cover_letters.md` | letters, one per role — a letter carrying an unresolved send-hold shows a `**Blocked until:**` marker and is not ready to submit; see below | markdown |
 
 The datasets (`data/*.jsonl`) are deliberately not in this table — they are for querying, not
 reading, and [Your data](your-data.md) covers them. Neither is `.jobsearch/`, a folder you will
 also see in your profile: it holds engine diagnostics, not anything about your search, and
 [Your data](your-data.md#jobsearch-engine-state-not-your-data) explains what it is.
+
+---
+
+## A marker you may see in `cover_letters.md`
+
+Upgrading to 0.27.0 may add a line under a letter's heading that was not there before:
+
+```
+**Blocked until:** unresolved (migrated 0.27.0 from prose)
+```
+
+That is not new information. It is a hold that already existed in the letter's own prose — a note
+like "wait until they confirm the licensing question" — made structured, so the dashboard can act
+on it instead of only a person reading the text. `unresolved` means the hold is real but not yet
+machine-checkable: nothing has said **what** it is waiting on.
+
+**What this means for you:** a letter carrying an unmet `**Blocked until:**` line — `unresolved` or
+anything else not satisfied yet — renders on the dashboard under *"⏳ Cover letters held — do not
+submit yet,"* not in the ready list, even if you consider the letter itself finished. To clear it:
+
+- replace `unresolved` with the real condition once you know it —
+  `**Blocked until:** contact:<id> outcome:<accepted|replied|...>` — and the letter moves to ready
+  by itself the next time the dashboard is generated, or
+- delete the `**Blocked until:**` line if the letter was never actually held.
+
+The original prose that prompted the marker is left in place beneath it — nothing was deleted, only
+made visible to the dashboard as well as to you.
 
 ---
 

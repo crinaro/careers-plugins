@@ -85,6 +85,15 @@ roles I pursue?" is a query, not a memory exercise.
 | `scope_notes` | which titles, filters and locations this channel covers |
 | `access` | how it is reached — see below |
 | `contacts`, `relationship_status`, `log` | for firms and referrals: who, where you stand, and the thread history |
+| `alert_sender` | for a channel that sends alert-digest emails (a board or aggregator): the Gmail search fragment for its own From address, e.g. `from:indeed`. Absent on a channel with nothing to sweep — a recruiter, a channel you only check by hand — which is correct, not a gap |
+
+**⭐ Retiring a channel now does two things, not one.** Setting `relationship_status: retired` used
+to only drop the channel from the review queue (`channels_due.py` — "what needs reviewing"). Since
+0.27.0 it also stops the daily alert sweep (`scripts/alert_sweep.py`) from reading that channel's
+`alert_sender` digests, even though `alert_sender` itself is untouched. If you retire a channel to
+get it off your review list but still want its automated alert emails scanned, retiring is the
+wrong lever today — the one field now controls both, so it stops the digests along with the queue
+entry whether you meant it to or not.
 
 `access` states what a source **requires**, not the mechanism used to reach it:
 

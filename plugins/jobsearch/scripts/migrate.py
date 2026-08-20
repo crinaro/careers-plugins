@@ -448,15 +448,24 @@ def m_0_18_0(profile, apply_it):
     skipped, so a second run finds nothing to do. SAFE by this module's own rule — inserts a
     line, deletes nothing, reversible from git.
     """
+    return _mark_prose_holds(profile, "drafts.md", apply_it, "0.18.0")
+
+
+def _mark_prose_holds(profile, filename, apply_it, label):
+    """Shared body of m_0_18_0 and m_0_27_0_cover_preconditions (dev #169): mark every '## '
+    entry in `filename` whose text carries a hold phrase but no structured field with
+    `**Blocked until:** unresolved (migrated <label> from prose)`. PRESERVE, THEN TRANSFORM —
+    the prose stays as evidence; only the marker line is inserted. Additive and idempotent."""
     import precondition as _pre
-    path = os.path.join(profile, "drafts.md")
+    path = os.path.join(profile, filename)
     if not os.path.exists(path):
         return True, ""
     try:
         with open(path, encoding="utf-8") as fh:
             md = fh.read()
     except OSError as e:
-        return False, "  ⚠️ drafts.md could not be read, so no preconditions were marked: %s" % e
+        return False, ("  ⚠️ %s could not be read, so no preconditions were marked: %s"
+                       % (filename, e))
 
     import re as _re
     marked, out, pos = 0, [], 0
@@ -466,7 +475,7 @@ def m_0_18_0(profile, apply_it):
                  and (_pre.HOLD_RE.search(title) or _pre.HOLD_RE.search(body)))
         out.append(md[pos:m.end(1)])
         if needs:
-            out.append("\n**Blocked until:** unresolved (migrated 0.18.0 from prose)")
+            out.append("\n**Blocked until:** unresolved (migrated %s from prose)" % label)
             marked += 1
         out.append(md[m.end(1):m.end()])
         pos = m.end()
@@ -475,15 +484,16 @@ def m_0_18_0(profile, apply_it):
     if not marked:
         return True, ""
     if not apply_it:
-        return True, ("  would mark %d draft(s) whose send-precondition lives only in prose as "
-                      "`**Blocked until:** unresolved`" % marked)
+        return True, ("  would mark %d entry(s) in %s whose send-precondition lives only in "
+                      "prose as `**Blocked until:** unresolved`" % (marked, filename))
     tmp = path + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.write("".join(out))
-    os.replace(tmp, path)               # atomic: never a half-written drafts.md
-    return True, ("  ✅ drafts.md — %d prose precondition(s) marked as data (`**Blocked "
+    os.replace(tmp, path)               # atomic: never a half-written file
+    return True, ("  ✅ %s — %d prose precondition(s) marked as data (`**Blocked "
                   "until:** unresolved`); they now report as blocked, not sendable. Structure "
-                  "each with contact:<id> outcome:<...> when the join is known." % marked)
+                  "each with contact:<id> outcome:<...> when the join is known."
+                  % (filename, marked))
 
 
 def m_0_19_0(profile, apply_it):
@@ -1213,11 +1223,109 @@ def m_0_26_0_state_home(profile, apply_it, home=None):
                   "the two locator pointers." % what)
 
 
+def m_0_27_0_cover_preconditions(profile, apply_it):
+    """0.27.0 — cover-letter send-holds in prose become data (GitHub issue #169, dev #169).
+
+    The 0.18.0 migration converted `drafts.md` only, while `precondition.py` and the dashboard
+    now treat `drafts.md` / `cover_letters.md` as the pair `check_sent_drafts.py` always said
+    they were. Without this step, a legacy prose hold sitting in `cover_letters.md` predates
+    the structured field and was never promoted to the loud `unresolved` marker — invisible
+    rather than noisy, so the letter rendered READY on the outward-facing artifact.
+
+    Same body as m_0_18_0 (`_mark_prose_holds`), aimed at the other half of the pair:
+    ⭐ PRESERVE, THEN TRANSFORM — the prose stays as human-readable evidence, one marker line
+    is inserted under the title, nothing is deleted. Additive and idempotent: entries already
+    carrying ANY `**Blocked until:**` field are skipped.
+    """
+    return _mark_prose_holds(profile, "cover_letters.md", apply_it, "0.27.0")
+
+
+# The sender fragments alert_sweep.py hardcoded before dev #147 — kept here ONLY as the
+# backfill's source of truth for what "already covered" meant. alert_sweep.py itself never
+# reads this dict again after the migration runs; it reads channels.jsonl's alert_sender field.
+LEGACY_ALERT_SENDERS = {
+    "indeed": "from:indeed",
+    "linkedin": "from:linkedin",
+    "dice": "from:dice",
+    "careerbuilder": "from:careerbuilder",
+    "ladders": "from:ladders",
+    "ziprecruiter": "from:ziprecruiter",
+}
+
+
+def m_0_27_0_alert_sender_backfill(profile, apply_it):
+    """0.27.0 — alert_sweep.py's aggregator sender list moves from a hardcoded constant into
+    `channels.jsonl` (GitHub issue #147, dev #147).
+
+    Retiring an aggregator channel in the store used to have no effect on the daily alert
+    sweep, because the retirement decision (`relationship_status`) and the sweep's source list
+    (a Python constant) lived in two disconnected places. `alert_sweep.py` now derives its
+    sender list from each channel's own `alert_sender` field and honors `relationship_status:
+    retired` automatically — a data decision that no longer needs an engine edit.
+
+    ⭐ PRESERVE, THEN TRANSFORM. This backfills `alert_sender` on any channel whose `id`
+    contains one of the six sender keywords the old constant hardcoded (indeed / linkedin /
+    dice / careerbuilder / ladders / ziprecruiter), matched as a whole `-`/`_`/`:`-delimited
+    token — never a bare substring, so an id like `dice-referral-erin` still matches on `dice`
+    but a hypothetical `paradise-health` channel does not. That reproduces EXACTLY the
+    coverage the sweep already had (the same six senders), from data instead of code, so
+    switching to store-driven sweeping changes no behavior for an existing profile until a
+    human acts on it (e.g. retires one). A channel whose id matches no keyword is left alone —
+    it was never in the old constant either, so backfilling it would invent coverage that
+    never existed.
+
+    Additive and idempotent: a row already carrying `alert_sender` (however it got there,
+    including a value of `null`) is never touched.
+    """
+    import re as _re
+    path = os.path.join(profile, "data", "channels.jsonl")
+    if not os.path.exists(path):
+        return True, ""
+    rows = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    rows.append(json.loads(line))
+    except Exception as e:
+        return False, ("  ⚠️ channels.jsonl could not be read, so alert_sender was left "
+                       "alone: %s" % e)
+
+    changed, backfilled = 0, []
+    for r in rows:
+        if "alert_sender" in r:
+            continue
+        cid = str(r.get("id") or "").lower()
+        tokens = _re.split(r"[-_:]", cid)
+        match = next((kw for kw in LEGACY_ALERT_SENDERS if kw in tokens), None)
+        if not match:
+            continue
+        r["alert_sender"] = LEGACY_ALERT_SENDERS[match]
+        backfilled.append("%s -> %s" % (r.get("id", "?"), LEGACY_ALERT_SENDERS[match]))
+        changed += 1
+
+    if not changed:
+        return True, ""
+    if not apply_it:
+        return True, ("  would backfill alert_sender on %d channel(s), preserving the old "
+                      "sweep coverage: %s" % (changed, "; ".join(backfilled)[:300]))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)               # atomic: never a half-written pipeline file
+    return True, ("  ✅ channels.jsonl — alert_sender backfilled on %d channel(s), preserving "
+                  "the old hardcoded sweep coverage: %s" % (changed, "; ".join(backfilled)[:300]))
+
+
 MIGRATIONS = (("0.4.0", m_0_4_0), ("0.13.0", m_0_13_0), ("0.14.0", m_0_14_0),
               ("0.17.0", m_0_17_0), ("0.18.0", m_0_18_0), ("0.19.0", m_0_19_0),
               ("0.20.0", m_0_20_0), ("0.24.0", m_0_24_0_blocked_until),
               ("0.24.0", m_0_24_0_last_touch), ("0.25.0", m_0_25_0_play_stage),
-              ("0.25.0", m_0_25_0_focus_retirement), ("0.26.0", m_0_26_0_state_home))
+              ("0.25.0", m_0_25_0_focus_retirement), ("0.26.0", m_0_26_0_state_home),
+              ("0.27.0", m_0_27_0_cover_preconditions),
+              ("0.27.0", m_0_27_0_alert_sender_backfill))
 
 
 def pending_for(profile, engine=None):

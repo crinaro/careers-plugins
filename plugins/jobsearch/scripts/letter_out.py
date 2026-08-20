@@ -272,6 +272,21 @@ def status():
     return 0
 
 
+def _send_hold(heading):
+    """The entry's send-precondition state, or None. dev #169: this script is an outward path —
+    it turns a letter into the deliverable — and it used to consult no precondition at all, the
+    same asymmetry that let a held letter render READY on the dashboard. Advisory here (the
+    human may legitimately prepare the file ahead), but never silent."""
+    try:
+        import precondition as _pre
+        for r in _pre.report(profile_root(), filenames=("cover_letters.md",)):
+            if r["title"] == heading and r["state"] in _pre.NOT_SENDABLE:
+                return r
+    except Exception:
+        pass                     # advisory: a broken resolver must not block a render
+    return None
+
+
 def render(needle, out_path=None):
     heading, body = find_entry(needle)
     words, problems = check_text(body)
@@ -279,6 +294,11 @@ def render(needle, out_path=None):
 
     print("Entry : %s" % heading)
     print("Body  : %d words" % words)
+    hold = _send_hold(heading)
+    if hold:
+        print("\n⏳ SEND-HOLD ON THIS LETTER [%s]: %s" % (hold["state"], hold["why"]))
+        print("   Rendering anyway — but this letter is NOT ready to submit until the")
+        print("   precondition resolves (dev #169).")
     if problems:
         print("\n⚠️ FIX BEFORE SENDING:")
         for p in problems:

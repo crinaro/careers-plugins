@@ -363,14 +363,21 @@ UNKNOWN, never a pass**, and two artifacts sharing an iCalendar UID are ONE meet
 highest `SEQUENCE` wins. Anything it surfaces goes into `data/commitments.jsonl` (the store
 behind the This Week tab) before the dashboard.
 
-**⭐ BEFORE PROMISING A CALL-PREP NOTE, CHECK `call_preps/` — ONE MAY ALREADY EXIST.** For any
-upcoming call, `ls call_preps/` (files are named `call_prep_<date>.md`) before writing "prep note
-to follow" anywhere — This Week, the summary, or the handoff. If a note for that date exists, **link
-to it, never re-promise it.** Added 2026-08-04 after this run told the candidate "prep notes to follow before
-Wed AM" for two calls whose prep note (`call_prep_2026-08-05.md`) had been written the day before,
-and This Week carried the same stale "I'll prep a note" promise on both. A promise from a stateless
-background run to do future work is the failure mode this whole design avoids — the artifact already
-on disk is the source of truth; verify it before asserting work is outstanding.
+**⭐ BEFORE PROMISING A CALL-PREP NOTE, ASK WHETHER ONE ALREADY EXISTS — AND NOT ONLY IN
+`call_preps/`.** Prep material for one company can be sitting in any of THREE durable stores:
+a live dated note (`call_preps/call_prep_<date>.md`), an already-archived one
+(`archive/call-preps/`), or the promoted durable knowledge file (`kb/<company_id>.md` — the
+PROMOTION step below moves durable content OUT of the dated note and INTO the kb file, so a
+company with an active `kb/` file can already carry what a repeat prep would say). For any
+upcoming call, run `~/.claude/jobsearch/run knowledge.py --prep-exists <company_id>` before
+writing "prep note to follow" anywhere — This Week, the summary, or the handoff. If it reports
+a hit, **link to that file, never re-promise it.** Added 2026-08-04, corrected 2026-08-19 (dev
+#153) after checking `call_preps/` alone missed prep already promoted to `kb/<company_id>.md`
+and re-promised it as owed across multiple runs — the guard now asks the same three stores
+`knowledge.py` already resolves joins against, rather than re-implementing a narrower version
+of that check by hand. A promise from a stateless background run to do future work is the
+failure mode this whole design avoids — the artifact already on disk is the source of truth;
+verify it before asserting work is outstanding.
 
 **⭐ A PREP NOTE JOINS THE PIPELINE; ITS ARCHIVE RECORDS THE PROMOTION** (issue #12 — both
 stores looked populated and answered nothing). Every prep note carries a `**Companies:**`

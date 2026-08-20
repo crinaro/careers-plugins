@@ -76,6 +76,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -124,6 +125,82 @@ def open_asks(asks, kind=None):
             if not a.get("resolved_on") and (kind is None or a.get("kind") == kind)]
     return sorted(rows, key=lambda a: (str(a.get("act_by") or "9999"),
                                        str(a.get("created") or "")))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# READY STAGED MESSAGES WITH NO ASK — dev #154 (GitHub issue #154).
+#
+# Your Move was built from asks.jsonl (plus the derived role/channel views), so a draft
+# fully staged and cleared to send — precondition state `sendable` — with no corresponding
+# ask appeared NOWHERE on the queue: it read as "nothing is waiting" rather than as work in
+# hand. ⛔ NOT fixed by auto-creating an ask: dev #142 established that a silently
+# manufactured (or closed) ask is worse than the gap, because an ask that appears and
+# vanishes without a decision is unreviewable. The drafts store is the source of truth for
+# drafts, so the queue line is DERIVED from it — exactly how role rows are derived from
+# opportunities.jsonl — and leaves by itself when the draft is sent (the sent-and-logged
+# rule retires the `## ` entry) or an ask takes over.
+#
+# Composition with dev #169: membership starts from precondition.report(), which owns the
+# staged-message pair (drafts.md AND cover_letters.md) and keys rows by (file, title). Only
+# state `sendable` is a candidate here — a HELD message (any precondition.NOT_SENDABLE
+# state) is a different state with its own dashboard section and must never read as ready.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Generic words that carry no identifying signal between an ask and a draft title.
+_COVER_STOP = frozenset(
+    "the a an and or of for to in on with at by from this that draft message note email "
+    "send sent follow following".split())
+
+# The same duplicate threshold check_sections.py uses for its ONE-ITEM-ONE-SECTION rule:
+# >= 2 shared distinctive words covering >= 60% of the smaller keyword set. Copied shape,
+# same constants — a second, different notion of "the same subject" would let an item pass
+# one check and fail the other.
+_COVER_MIN_SHARED = 2
+_COVER_RATIO = 0.6
+
+
+def _subject_keywords(text):
+    t = re.sub(r"\[.*?\]\(.*?\)", " ", str(text).lower())
+    t = re.sub(r"[^a-z0-9 ]+", " ", t)
+    return {w for w in t.split() if len(w) > 3 and w not in _COVER_STOP}
+
+
+def ask_covers_staged_message(ask, title):
+    """Does this OPEN ask already put a queue line on the surface for the staged message
+    `title`? Keyword overlap between the draft's title and the ask's title+text, at
+    check_sections.py's duplicate threshold.
+
+    Direction of error, deliberately: a MISSED cover renders two lines about one subject —
+    visible, annoying, and the exact duplication dev #142's reporter hit, but self-evident
+    on the page. A FALSE cover suppresses only the derived queue line; the ask's own line
+    still names the same subject and the full draft still renders in its panel, so the
+    message is never invisible — which is the failure #154 exists to close."""
+    kd = _subject_keywords(title)
+    ka = _subject_keywords("%s %s" % (ask.get("title") or "", ask.get("ask") or ""))
+    if not kd or not ka:
+        return False
+    overlap = kd & ka
+    return (len(overlap) >= _COVER_MIN_SHARED
+            and len(overlap) >= min(len(kd), len(ka)) * _COVER_RATIO)
+
+
+def ready_staged_without_ask(root, asks=None, pre_rows=None):
+    """[{'file','title','why'}] — every staged message precondition.py reports `sendable`
+    that no open ask covers. These are the queue's derived draft lines; a covered draft's
+    queue line is the ask itself (one item, one section), and a held/unreadable/unresolved
+    one belongs to the held sections, never here."""
+    if pre_rows is None:
+        pre_rows = _pre.report(root)
+    open_ = open_asks(asks if asks is not None else _load_jsonl(root, "asks.jsonl"))
+    out = []
+    for r in pre_rows:
+        if r.get("state") != "sendable":
+            continue
+        if any(ask_covers_staged_message(a, r["title"]) for a in open_):
+            continue
+        out.append({"file": r.get("file", "drafts.md"), "title": r["title"],
+                    "why": "staged and cleared to send; no open ask points at it"})
+    return out
 
 
 def _load_jsonl(root, name):
@@ -322,6 +399,8 @@ def report(root, today=None):
         "play_unresolved": [{"id": o.get("id"), "title": o.get("title"),
                              "status": o.get("status")}
                             for o in unresolved_play_stages(opps)],
+        # dev #154: a ready staged message no ask covers is WORK IN HAND, not silence.
+        "ready_staged": ready_staged_without_ask(root),
     }
 
 
@@ -357,6 +436,10 @@ def main():
             print("  🎬 play-unres  %s" % ((p["title"] or p["id"] or "?")[:60]))
             print("        play_stage is the migration marker 'unresolved' — set the real "
                   "value: record.py set %s play_stage <stage>" % (p["id"] or "?"))
+        for r in data["ready_staged"]:
+            print("  ✉️  ready       %s › %s" % (r["file"], r["title"][:60]))
+            print("        %s — approve and send it, or record the ask that owns it"
+                  % r["why"])
         n_unres = sum(1 for r in data["roles"] if r["state"] == "unresolved")
         n_fulfilled = sum(1 for c in data["channels"] if c["state"] == "fulfilled")
         print("\n  %d role(s) unresolved · %d channel plan(s) fulfilled but not yet cleared"

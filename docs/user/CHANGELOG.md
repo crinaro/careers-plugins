@@ -2,6 +2,9 @@
 
 Generated from public issues confirmed fixed and shipped. Newest first.
 
+## 0.28.0
+- [#25](https://github.com/crinaro/careers-plugins/issues/25) — Dispatched subagents lack the engine-root pointer/launcher the main run uses to resolve engine files
+
 ## 0.26.0
 - [#24](https://github.com/crinaro/careers-plugins/issues/24) — A user-owned role recorded with a future action date and a sourced/backlog status is invisible on the 'decisions waiting on you' surface until its action date arrives
 - [#23](https://github.com/crinaro/careers-plugins/issues/23) — record.py's create path leaves the caller to guess a valid record at every stage: --dry-run passes input the real write then refuses, rejection messages name no field, and the fields listing omits enum and type constraints

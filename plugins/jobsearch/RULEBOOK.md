@@ -201,13 +201,13 @@ still `false`. Ask before any comp conversation leans on that tier.
   ⭐ Gmail: the configured set in `user.json` is the COMPLETE set** — read it with
   `python3 "${CLAUDE_PLUGIN_ROOT}/scripts/profile.py"`, never retype an address, and never add one that shows up in a
   recruiting database (at least one such address is bad data and must not be re-raised as a
-  coverage gap). `scripts/gmail_mcp_server.py` searches **all** accounts by default and raises a
-  loud `!! INCOMPLETE COVERAGE` banner for any it cannot reach — **never pass a single `account`
-  unless you specifically mean to narrow it, and never read a banner-ed result as a zero.**
-  Correspondence also spans LinkedIn and phone, so any one mailbox is a partial view. Added
-  2026-07-20 after accusing a subagent of fabricating a real email. **When a subagent reports
-  something you cannot find, the first hypothesis is a gap in YOUR search scope, not invention by
-  the agent.** Say "I couldn't find it in X," never "it doesn't exist."
+  coverage gap). Gmail search (`scripts/gmail_mcp_server.py` for sweeps, `gmail-multi`'s tools
+  interactively) covers **all** accounts by default and raises a loud coverage error —
+  **never pass a single `account` unless you mean to narrow it, and never read
+  that error as a zero.** Correspondence also spans LinkedIn and phone, so any one mailbox is a
+  partial view. Added 2026-07-20 after wrongly accusing a subagent of fabrication. **When a
+  subagent reports something you cannot find, the first hypothesis is a gap in YOUR search
+  scope, not invention by the agent.** Say "I couldn't find it in X," never "it doesn't exist."
   _Forwarding, per-account quirks, and the excluded address are DATA:_ `user.json`.
   _Incident history: [docs/incident_archive.md](docs/incident_archive.md#mailbox-coverage)._
 - NEVER silently resolve a relative date/time reference ("next Friday," "in two weeks")
@@ -364,12 +364,13 @@ broken one reads downstream as "no matching proof points" — same as having non
 **Deterministic sweeps** (a daily, predictable artifact is a query, not a model summary):
 - `alert_sweep.py` — board/aggregator digests, every configured mailbox.
 - `meeting_check.py` — calendar artifacts diffed against `data/commitments.jsonl`.
-- `gmail_mcp_server.py` — multi-account Gmail over IMAP. **⭐ `account` defaults to `all`; an
-  unreachable account raises a loud `!! INCOMPLETE COVERAGE` banner. Never pass a single
-  `account` unless you specifically mean to narrow it.** Credentials live only in the OS
-  credential store (service `claudesearch-imap`), never in the repo, never a CLI argument. **Claude must not
-  handle them** — if `gmail_accounts` reports `[MISSING]`, say so rather than silently
-  searching one mailbox.
+- `gmail_mcp_server.py` — **library only, no `mcpServers` entry**: sweeps import it, reading
+  `user.json`. Interactive `gmail_*` tools: `gmail-multi`'s own server, reading
+  `~/.claude/gmail-multi/accounts.json`, kept pointed here via `include` (`m_0_29_0`). **⭐
+  `account` defaults to `all` on both; an unreachable one raises `!! INCOMPLETE COVERAGE`
+  (sweeps) or `AccountsError` (connector)** — see above. Credentials: OS credential store only
+  (service `claudesearch-imap`), never the repo. **Claude must not handle them** — if
+  `gmail_accounts` reports `[MISSING]`, say so rather than searching one mailbox silently.
 
 **Reading and screening:**
 - `profile.py` — loads `user.json` + `config.json`. **`--screen-all` is the executable comp

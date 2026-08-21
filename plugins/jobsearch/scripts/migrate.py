@@ -1319,13 +1319,68 @@ def m_0_27_0_alert_sender_backfill(profile, apply_it):
                   "the old hardcoded sweep coverage: %s" % (changed, "; ".join(backfilled)[:300]))
 
 
+def m_0_29_0_gmail_connector_config(profile, apply_it, home=None):
+    """0.29.0 — the Gmail MCP server moves to the standalone `gmail-multi` connector plugin
+    (marketplace ADR-004). The connector reads its OWN config, `~/.claude/gmail-multi/
+    accounts.json`, never this profile's `user.json` — it must work for people who have no
+    job-search profile at all. So the jobsearch case becomes a CONSUMER of that mechanism:
+    this migration points the connector's `include` list at this profile's `user.json`, and
+    from then on a mailbox added to the profile reaches the connector on its next tool call
+    with no second bookkeeping and no divergent copy of the address list.
+
+    ⭐ PRESERVE, THEN TRANSFORM — additive only. An existing accounts.json (a user who
+    configured the connector directly, or another profile on an agency machine) keeps every
+    entry it has; this only appends this profile's user.json to `include` if absent. It
+    NEVER copies addresses (a copy is the divergence this design exists to avoid) and NEVER
+    removes anything. Reversal is one `--drop-include`.
+
+    Idempotent: the include already present, or no user.json in this profile, is a no-op.
+    An unreadable existing accounts.json is REPORTED and left alone — clobbering another
+    consumer's config to complete a migration would be silent data loss.
+    """
+    user_json = os.path.join(profile, "user.json")
+    if not os.path.exists(user_json):
+        return True, ""
+    user_json = os.path.abspath(user_json)
+    base = home or os.path.expanduser("~")
+    cfg_dir = os.path.join(base, ".claude", "gmail-multi")
+    cfg = os.path.join(cfg_dir, "accounts.json")
+    data = {}
+    if os.path.exists(cfg):
+        try:
+            with open(cfg, encoding="utf-8") as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                raise ValueError("top level is %s, not an object" % type(data).__name__)
+        except (OSError, ValueError) as e:
+            return False, ("  ⚠️ %s exists but cannot be read (%s). Left untouched — fix or "
+                           "remove it, then use the gmail-multi plugin's /gmail-multi:accounts "
+                           "command to include %s" % (cfg, e, user_json))
+    includes = data.setdefault("include", [])
+    if user_json in includes:
+        return True, ""
+    if not apply_it:
+        return True, ("  would point the gmail-multi connector at this profile's mailboxes: "
+                      "add %s to `include` in %s" % (user_json, cfg))
+    includes.append(user_json)
+    os.makedirs(cfg_dir, exist_ok=True)
+    tmp = cfg + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(data, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+    os.replace(tmp, cfg)
+    return True, ("  gmail-multi connector now reads this profile's mailboxes via include: "
+                  "%s" % cfg)
+
+
 MIGRATIONS = (("0.4.0", m_0_4_0), ("0.13.0", m_0_13_0), ("0.14.0", m_0_14_0),
               ("0.17.0", m_0_17_0), ("0.18.0", m_0_18_0), ("0.19.0", m_0_19_0),
               ("0.20.0", m_0_20_0), ("0.24.0", m_0_24_0_blocked_until),
               ("0.24.0", m_0_24_0_last_touch), ("0.25.0", m_0_25_0_play_stage),
               ("0.25.0", m_0_25_0_focus_retirement), ("0.26.0", m_0_26_0_state_home),
               ("0.27.0", m_0_27_0_cover_preconditions),
-              ("0.27.0", m_0_27_0_alert_sender_backfill))
+              ("0.27.0", m_0_27_0_alert_sender_backfill),
+              ("0.29.0", m_0_29_0_gmail_connector_config))
 
 
 def pending_for(profile, engine=None):

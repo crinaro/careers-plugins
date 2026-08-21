@@ -49,6 +49,20 @@ reports back.
 > mid-session, scripts pick up the new version immediately but the loaded instructions do not.
 > Start a fresh session after an update.
 
+> **Gmail is a second plugin.** The tools that read, search and draft mail — this plugin never
+> sends — come from `gmail-multi`, a standalone connector. Right after you install this plugin,
+> its first session start installs the connector for you, from the same marketplace you
+> installed this plugin from; you do not configure it separately, and the first session after
+> that also points it at your profile, so a mailbox you add here reaches it without any second
+> setup step. It is not this plugin misbehaving if you see `gmail-multi` in your
+> installed-plugins list; it is how mail coverage works. **The tools take one extra session to
+> arrive** — start a fresh session after installing before you expect Gmail tools to show up.
+> **If mail tools are still missing after that,** run `claude plugin list`: this plugin's own
+> commands keep working either way, so the symptom of a missing connector is never this
+> plugin's commands going unrecognized — it is specifically the absence of Gmail tools. If the
+> connector did not install itself (it will say so plainly when that happens), installing
+> `gmail-multi` yourself from the same marketplace fixes it.
+
 ---
 
 ## A day, in order
@@ -56,7 +70,9 @@ reports back.
 Nothing below sends anything or commits anything without you.
 
 1. **Session start.** The plugin checks its own installation is intact, and brings your profile's
-   data format up to date if the version moved. Both are automatic; neither asks you anything.
+   data format up to date if the version moved — the first such update also points the Gmail
+   connector plugin at this profile, a one-time step (see **What actually runs**, above). All of
+   this is automatic; none of it asks you anything.
 
 2. **Sweep.** Your mailbox and LinkedIn are read for things that changed: recruiter replies,
    interview invitations, application receipts, rejections. This is deterministic — it finds

@@ -258,9 +258,38 @@ def is_ephemeral_engine(path):
     return any(marker in p for marker in _EPHEMERAL_MARKERS)
 
 
-# ⭐ Where the marketplace puts an INSTALLED copy, as opposed to somebody's checkout.
-INSTALL_CACHE = os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache",
-                             "careers-plugins", "jobsearch")
+# ⭐⭐ dev #199 — CACHE_ROOT is the fixed half; the marketplace segment directly under it is NOT.
+#
+# `is_installed_engine()` used to test a path against `INSTALL_CACHE`, which hardcoded the
+# marketplace's own NAME ("careers-plugins"). That name is not this plugin's identity — the
+# marketplace rename to `crinaro/marketplace` is approved — and the moment it lands, a
+# literal-name test returns False for a genuinely INSTALLED copy. That matters more than it
+# looks: `_remember_engine`'s ENTIRE guard against a checkout hijacking the durable pointer is
+# `is_installed_engine(current) and not is_installed_engine(path)` (below), and the worktree path
+# this harness uses (`<repo>/.claude/worktrees/agent-<id>`) does not match any
+# `_EPHEMERAL_MARKERS` marker either (they are separator-delimited: `/tmp/`, `/Temp/`,
+# `/local-agent-mode-sessions/`, `/rpm/plugin_`). Once the name check goes stale, that guard
+# silently stops holding — nothing today is broken, because the pointer currently names an
+# installed copy under the CURRENT name, but the day the rename lands, a stray import from a
+# checkout or worktree wins the comparison and hijacks the pointer, silently, with nobody there
+# to notice (the same "the failure lands hours later in an unattended run" shape as the
+# per-session-copy bug `is_ephemeral_engine` exists for, above).
+#
+# So the test is now STRUCTURAL — `~/.claude/plugins/cache/<any one marketplace segment>/
+# jobsearch/...` — never the marketplace's literal name. `jobsearch` genuinely IS fixed: it is
+# this file's own identity, the same literal already hardcoded throughout this module (`POINTER`,
+# `ENGINE_POINTER`, `STATE_DIRNAME`). The marketplace segment is read structurally (`rest[0]`,
+# below) and never compared against a value, so a rename cannot break this file at all.
+#
+# `INSTALL_CACHE` is kept — nothing in this module reads it any more, but `is_installed_engine`'s
+# own tests, and anyone reading this file, still want the concrete default path spelled out.
+# `install_launcher.py`'s `_install_identity()` derives the marketplace name independently for
+# its own generated launcher script; this module deliberately does NOT read that (or the
+# catalog) to do the same — `_remember_engine()` runs at IMPORT for 58 callers, and a file read
+# on every import is exactly the cost `engine_root()`'s own docstring already refuses to pay.
+CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
+_INSTALLED_PLUGIN_NAME = "jobsearch"  # this engine's own identity — fixed, unlike the marketplace
+INSTALL_CACHE = os.path.join(CACHE_ROOT, "careers-plugins", _INSTALLED_PLUGIN_NAME)
 
 
 def is_installed_engine(path):
@@ -268,9 +297,19 @@ def is_installed_engine(path):
 
     Deliberately a path test and not a content test: a checkout and an installed copy hold the
     same files, so nothing INSIDE them can tell the two apart. Where it sits is the only signal.
+
+    ⭐⭐ dev #199 — STRUCTURAL: `~/.claude/plugins/cache/<anything>/jobsearch/...`. The marketplace
+    segment (`rest[0]`) is read and ignored, never matched against a literal — see the comment
+    above `CACHE_ROOT` for why a name-pinned test was the bug.
     """
     p = os.path.realpath(path or "")
-    return bool(p) and p.startswith(os.path.realpath(INSTALL_CACHE) + os.sep)
+    if not p:
+        return False
+    root = os.path.realpath(CACHE_ROOT)
+    if not (p == root or p.startswith(root + os.sep)):
+        return False
+    rest = p[len(root):].lstrip(os.sep).split(os.sep)
+    return len(rest) >= 2 and rest[1] == _INSTALLED_PLUGIN_NAME
 
 
 def _remember_engine(path):

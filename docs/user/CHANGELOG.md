@@ -1,16 +1,23 @@
 # Changelog
 
-Generated from public issues confirmed fixed and shipped. Newest first.
+Generated from fixes confirmed shipped — public reports and internal fixes alike, each recorded only after its release tag exists on the published remote. Sections are grouped by plugin, then by version. Newest first.
 
-## 0.28.0
+## jobsearch 0.28.0
 - [#25](https://github.com/crinaro/careers-plugins/issues/25) — Dispatched subagents lack the engine-root pointer/launcher the main run uses to resolve engine files
 
-## 0.26.0
+## jobsearch 0.27.0
+- A cover letter carrying a send-hold renders as READY — precondition machinery covers drafts.md only *(tracked internally as crinaro/careers-plugins-dev#169)*
+- A staged draft with no matching ask has no guaranteed home in the generated Your Move, so a ready-to-send draft can stay invisible *(tracked internally as crinaro/careers-plugins-dev#154)*
+- Prep-note existing-work guard only scans call_preps/, so prep written into kb/ gets re-promised as owed *(tracked internally as crinaro/careers-plugins-dev#153)*
+- Generated dashboard has no sourcing/strategy tab; channel status, route, cadence and yield are visible only via scripts *(tracked internally as crinaro/careers-plugins-dev#148)*
+- Alert-sweep's aggregator sender list is hardcoded, independent of channel store retirement status *(tracked internally as crinaro/careers-plugins-dev#147)*
+
+## jobsearch 0.26.0
 - [#24](https://github.com/crinaro/careers-plugins/issues/24) — A user-owned role recorded with a future action date and a sourced/backlog status is invisible on the 'decisions waiting on you' surface until its action date arrives
 - [#23](https://github.com/crinaro/careers-plugins/issues/23) — record.py's create path leaves the caller to guess a valid record at every stage: --dry-run passes input the real write then refuses, rejection messages name no field, and the fields listing omits enum and type constraints
 - [#22](https://github.com/crinaro/careers-plugins/issues/22) — The generated-dashboard publish model has a staleness window: the published view can lag committed state via two distinct mechanisms
 
-## 0.25.0
+## jobsearch 0.25.0
 - [#21](https://github.com/crinaro/careers-plugins/issues/21) — OPEN DESIGN QUESTION: two dashboard views present the same records through two different taxonomies instead of one lifecycle-state view
 - [#20](https://github.com/crinaro/careers-plugins/issues/20) — Generated dashboard renders knowledge-base and call-preparation artifacts as filename strings, not their content
 - [#19](https://github.com/crinaro/careers-plugins/issues/19) — No schema field represents a pursued opportunity's post-application play-sequence stage

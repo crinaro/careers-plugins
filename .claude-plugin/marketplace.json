@@ -8,6 +8,16 @@
   },
   "plugins": [
     {
+      "name": "gmail-multi",
+      "description": "Search, read, and draft across SEVERAL Gmail accounts at once — the managed Gmail connector binds to one account; this one covers them all in a single query, tags every result with its mailbox, fetches attachments, and creates drafts it structurally cannot send. Standalone: configure accounts with its own /gmail-multi:accounts command; app passwords stay in the OS credential store and are never seen by Claude. Use it whenever mail spans more than one Google account.",
+      "author": {
+        "name": "Crinaro",
+        "email": "john@crinaro.ai"
+      },
+      "category": "productivity",
+      "source": "./plugins/gmail-multi"
+    },
+    {
       "name": "jobsearch",
       "description": "A job-search assistant: sweeps your mailbox and LinkedIn for replies and interview invitations, screens roles against your own compensation floors and geography, tracks every application and conversation, and drafts outreach in your voice. It never sends anything itself.",
       "author": {

@@ -1,0 +1,32 @@
+{
+  "name": "gmail-multi",
+  "description": "Search, read, and draft across SEVERAL Gmail accounts at once — the managed Gmail connector binds to one account; this one covers them all in a single query, tags every result with its mailbox, fetches attachments, and creates drafts it structurally cannot send. Standalone: configure accounts with its own /gmail-multi:accounts command; app passwords stay in the OS credential store and are never seen by Claude. Use it whenever mail spans more than one Google account.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Crinaro",
+    "email": "john@crinaro.ai"
+  },
+  "repository": "https://github.com/crinaro/careers-plugins",
+  "license": "Apache-2.0",
+  "keywords": [
+    "gmail",
+    "email",
+    "imap",
+    "multi-account",
+    "connector",
+    "mcp"
+  ],
+  "metadata": {
+    "versioningPolicy": "Explicit releases; minor per behaviour change, patch per fix. Bump before any sync or push — an unbumped change ships nothing and looks like a broken install.",
+    "provides": "MCP server gmail-multi (5 gmail_* tools). Contracts: adr-004-gmail-connector-extraction.md"
+  },
+  "mcpServers": {
+    "gmail-multi": {
+      "command": "python3",
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/scripts/gmail_mcp_server.py"
+      ],
+      "env": {}
+    }
+  }
+}

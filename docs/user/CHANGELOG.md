@@ -2,6 +2,10 @@
 
 Generated from fixes confirmed shipped — public reports and internal fixes alike, each recorded only after its release tag exists on the published remote. Sections are grouped by plugin, then by version. Newest first.
 
+## jobsearch 0.29.0
+- Release: jobsearch 0.29.0 and gmail-multi 0.1.0 — connector self-install replaces the declared dependency *(tracked internally as crinaro/marketplace-dev#210)*
+- _root.py hardcodes the marketplace name while install_launcher.py derives it — the two disagree for any non-default catalog *(tracked internally as crinaro/marketplace-dev#199)*
+
 ## jobsearch 0.28.0
 - [#25](https://github.com/crinaro/careers-plugins/issues/25) — Dispatched subagents lack the engine-root pointer/launcher the main run uses to resolve engine files
 
@@ -27,3 +31,6 @@ Generated from fixes confirmed shipped — public reports and internal fixes ali
 - [#14](https://github.com/crinaro/careers-plugins/issues/14) — A validation gate can never pass on a clean install: shipped design docs point at scripts present in no released version
 - [#13](https://github.com/crinaro/careers-plugins/issues/13) — The weekly reconcile audit again mis-attributes replies and platform events to the wrong sibling outreach row for the same recipient
 - [#12](https://github.com/crinaro/careers-plugins/issues/12) — The outbound-click guard's startup selftest fails to open its own transcript path, so every click is classified unresolvable and allowed through instead of blocked
+
+## gmail-multi 0.1.0
+- Release: jobsearch 0.29.0 and gmail-multi 0.1.0 — connector self-install replaces the declared dependency *(tracked internally as crinaro/marketplace-dev#210)*

@@ -1,13 +1,14 @@
-# careers-plugins
+# crinaro-marketplace
 
-A Claude Code plugin marketplace for the **careers vertical** — tools that help a person find
-their next role, and help a small agency support several people doing the same.
+A Claude Code plugin marketplace from Crinaro — general-purpose productivity capabilities, not
+pinned to any one vertical.
 
 ## Plugins
 
 | plugin | what it does | status |
 |---|---|---|
 | **jobsearch** | Sweeps your mailbox and LinkedIn for replies and interview invitations, screens roles against your own compensation floors and geography, tracks every application and conversation, and drafts outreach in your voice. It never sends anything itself. | available |
+| **gmail-multi** | Searches, reads, and drafts across several Gmail accounts at once, tagging every result with its mailbox. Standalone — works without jobsearch. | available |
 
 More are planned. Each plugin lives under `plugins/<name>/` and installs independently — you take
 the ones you want.

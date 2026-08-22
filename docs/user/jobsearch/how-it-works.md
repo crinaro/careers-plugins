@@ -39,9 +39,9 @@ is here.
 
 **Commands** are what you type: `/coordinator`, `/checkup`, `/tier`. They are entry points.
 
-**Agents** are the parts that need judgement — reading a job description against your resume,
-drafting a message in your voice, researching a company. Each runs in its own context and
-reports back.
+**Agents** are the parts that need their own context window — bulk reading (sweeping a mailbox,
+scanning boards) or judgement (reading a job description against your resume, drafting a message
+in your voice, researching a company). Each runs in its own context and reports back.
 
 **Skills** are procedures the assistant follows, loaded when a session starts.
 

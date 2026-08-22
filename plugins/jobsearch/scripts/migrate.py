@@ -1429,6 +1429,24 @@ def main():
         if not args.hook:
             print("Install self-heal skipped: %s" % e, file=sys.stderr)
 
+    # ── launcher self-heal, same envelope and same reason (marketplace identifier rename) ────
+    # `~/.claude/jobsearch/run` is a GENERATED file that bakes in the marketplace identity at
+    # the time it was last written (install_launcher.py's CACHE fallback line). A marketplace
+    # rename moves the cache path an installed copy actually sits at; regenerating the launcher
+    # whenever it already exists and disagrees with the currently-derived identity keeps it
+    # from freezing on a path that no longer resolves. Machine state, not profile state, so it
+    # runs even when the cwd has nothing to migrate — same reasoning as the heal above.
+    try:
+        import install_launcher
+        lv, l_lines = install_launcher.heal_if_stale(apply_it=not args.check)
+        if l_lines:
+            print("jobsearch: launcher (%s)" % lv)
+            print("\n".join(l_lines))
+    except Exception as e:                     # noqa: BLE001 — housekeeping must never block
+        diag("migrate", verdict="launcher-heal-error", reason=type(e).__name__)
+        if not args.hook:
+            print("Launcher heal skipped: %s" % e, file=sys.stderr)
+
     # ⭐⭐ AND THE RULEBOOK, for the same reason and in the same place. It installs into the
     # profile as CLAUDE.md and loads at session start, so a stale copy is read as
     # authoritative — this file's own rule. Nothing called install_rulebook.py from any hook,

@@ -3,7 +3,7 @@
 
 The engine documented exactly one route for reporting its own defects:
 
-    python3 <careers-plugins>/scripts/intake.py --add …
+    python3 <marketplace-dev>/scripts/intake.py --add …
 
 ⚠️ THAT PATH SHIPS NOWHERE. It exists only in the private maintainer repository. On a
 machine that also has a maintainer's checkout it silently resolved to *that* tree — which is

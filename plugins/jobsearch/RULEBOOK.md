@@ -301,7 +301,7 @@ still `false`. Ask before any comp conversation leans on that tier.
 
 ## ⭐ THIS SESSION DOES NOT EDIT THE ENGINE — route it instead
 
-**The search runs here; the engine is maintained in the `careers-plugins` repo, by its own
+**The search runs here; the engine is maintained in the `crinaro-marketplace` repo, by its own
 session.** In development both sit on one disk, so nothing physical stops a search session
 reaching over and "just fixing" a script — which is exactly what the split exists to prevent.
 Engine changes once landed **mid-run, while a scheduled run was reading the same files.**

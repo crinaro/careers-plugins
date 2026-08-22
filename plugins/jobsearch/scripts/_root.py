@@ -289,7 +289,7 @@ def is_ephemeral_engine(path):
 # on every import is exactly the cost `engine_root()`'s own docstring already refuses to pay.
 CACHE_ROOT = os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
 _INSTALLED_PLUGIN_NAME = "jobsearch"  # this engine's own identity — fixed, unlike the marketplace
-INSTALL_CACHE = os.path.join(CACHE_ROOT, "careers-plugins", _INSTALLED_PLUGIN_NAME)
+INSTALL_CACHE = os.path.join(CACHE_ROOT, "crinaro-marketplace", _INSTALLED_PLUGIN_NAME)
 
 
 def is_installed_engine(path):

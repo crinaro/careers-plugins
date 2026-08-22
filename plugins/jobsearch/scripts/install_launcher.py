@@ -53,7 +53,7 @@ if [ -f "$ENGINE_FILE" ]; then
   ENGINE=$(cat "$ENGINE_FILE")
 fi
 
-CACHE="$HOME/.claude/plugins/cache/careers-plugins/jobsearch"
+CACHE="$HOME/.claude/plugins/cache/crinaro-marketplace/jobsearch"
 
 # Reject a session-scoped pointer, and one naming a directory that no longer exists.
 case "$ENGINE" in
@@ -99,7 +99,7 @@ fi
 if [ -z "$ENGINE" ]; then
   echo "No usable engine. $ENGINE_FILE is missing, names a directory that is gone, or points" >&2
   echo "inside a per-session plugin copy, and no installed version was found under" >&2
-  echo "\\$HOME/.claude/plugins/cache/careers-plugins/jobsearch." >&2
+  echo "\\$HOME/.claude/plugins/cache/crinaro-marketplace/jobsearch." >&2
   echo "Reinstall the plugin, or run install_launcher.py from a checkout." >&2
   exit 2
 fi
@@ -133,9 +133,22 @@ def _install_identity():
     2. Installed from a checkout: <repo>/plugins/<plugin>/ — the plugin name is the directory,
        and the repo's own catalog (.claude-plugin/marketplace.json `name`) names the
        registration. Falls back to today's names, which keeps every existing install identical.
+
+    ⭐ BOTH SIDES OF THE `relpath` CALL MUST BE REALPATH'D, OR THIS SILENTLY TAKES THE WRONG
+    BRANCH. `engine_root()` already resolves through symlinks (its own docstring: realpath, not
+    abspath). `$HOME` did not, and on macOS `tempfile.mkdtemp()` (and therefore any HOME pointed
+    at a temp dir, which is exactly what the test suite and a CI runner do) sits under
+    `/var/folders/...`, a symlink to `/private/var/folders/...`. `relpath` between a resolved and
+    an unresolved path shares no prefix, so it returns a long `../..` chain that fails the
+    `not rel.startswith(os.pardir)` check — the cache branch is silently skipped, and case 2
+    reads `os.path.basename(eng)`, which is the VERSION directory, not `jobsearch`. Caught by
+    `TestLauncherSelfHeal.test_migrate_hook_end_to_end_heals_the_launcher`, which failed with a
+    launcher naming `cache/crinaro-marketplace/9.9.2` — the version number standing in for the
+    plugin name — the day this function grew its first real caller of the derived identity.
     """
     eng = os.path.abspath(engine_root())
-    cache_root = os.path.join(os.path.expanduser("~"), ".claude", "plugins", "cache")
+    cache_root = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "plugins",
+                                               "cache"))
     try:
         rel = os.path.relpath(eng, cache_root)
     except ValueError:  # Windows: paths on different drives
@@ -152,7 +165,7 @@ def _install_identity():
             name = (json.load(fh).get("name") or "").strip()
     except (OSError, ValueError):
         name = ""
-    return (name or "careers-plugins"), plugin
+    return (name or "crinaro-marketplace"), plugin
 
 
 def install():
@@ -162,8 +175,8 @@ def install():
     # variable and in the no-engine error message — both must move together).
     marketplace, plugin = _install_identity()
     body = TEMPLATE
-    if (marketplace, plugin) != ("careers-plugins", "jobsearch"):
-        body = body.replace("careers-plugins/jobsearch", "%s/%s" % (marketplace, plugin))
+    if (marketplace, plugin) != ("crinaro-marketplace", "jobsearch"):
+        body = body.replace("crinaro-marketplace/jobsearch", "%s/%s" % (marketplace, plugin))
     with open(LAUNCHER, "w", encoding="utf-8") as fh:
         fh.write(body)
     os.chmod(LAUNCHER, os.stat(LAUNCHER).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -172,6 +185,64 @@ def install():
     with open(ptr, "w", encoding="utf-8") as fh:
         fh.write(engine_root())
     return LAUNCHER
+
+
+def heal_if_stale(apply_it=True):
+    """Regenerate `~/.claude/jobsearch/run` when it already exists but bakes in a stale
+    marketplace identity (marketplace issue: identifier rename).
+
+    ⭐ SAME SHAPE AS `heal_install.py` (adr-014): install-machinery self-heal, not a profile
+    migration — it runs from `migrate.py`'s own SessionStart hook regardless of whether a
+    profile is even present, because a stale generated launcher is a property of the MACHINE,
+    not of any one profile.
+
+    A marketplace rename moves the cache path an installed copy actually sits at — the
+    generated launcher's `CACHE=".../cache/<marketplace>/jobsearch"` fallback line was
+    substituted at the time `install()` last ran, and stays frozen at whatever identity was
+    current then. `_root.py`'s `ENGINE_POINTER` already self-heals on every script import
+    (`_remember_engine`, structural since dev #199), so the launcher keeps working as long as
+    the pointer is valid — but the pointer itself is validated and can be rejected (a vanished
+    directory, a session-scoped copy), at which point the launcher falls back to its own baked
+    CACHE line. A launcher naming the OLD marketplace segment then finds nothing there and the
+    run fails with "No usable engine", even though a perfectly good install exists one path
+    segment over. Regenerating the launcher whenever it exists and disagrees with the
+    CURRENTLY-DERIVED identity closes that gap.
+
+    ⭐ ONLY ACTS ON AN EXISTING LAUNCHER. A user who never ran `install_launcher.py` (or
+    onboarding) gets nothing created here — creating one from nothing stays onboarding's job,
+    the same boundary `heal_install.py` draws around installs it did not create.
+
+    SAFE by this module's own rule (migrate.py's docstring): `install()` overwrites a file
+    whose own header says "GENERATED ... do not edit; re-run that script instead" — idempotent,
+    reversible (re-running install() again is always safe), and carries no user data.
+
+    Returns (verdict, lines). verdict: absent | healthy | healed | would-heal | error. Never
+    raises — callers still wrap this in their own envelope, but it stays self-contained so it
+    can be tested and called directly.
+    """
+    if not os.path.exists(LAUNCHER):
+        return "absent", []
+    try:
+        marketplace, plugin = _install_identity()
+    except Exception as e:                      # noqa: BLE001 — fails open, deliberately
+        return "error", ["  ⚠️ could not derive the current install identity (%s: %s) — "
+                         "launcher left unchanged." % (type(e).__name__, e)]
+    want = "cache/%s/%s" % (marketplace, plugin)
+    try:
+        with open(LAUNCHER, encoding="utf-8") as fh:
+            body = fh.read()
+    except OSError as e:
+        return "error", ["  ⚠️ could not read %s (%s) — launcher left unchanged." % (LAUNCHER, e)]
+    if want in body:
+        return "healthy", []
+    if not apply_it:
+        return "would-heal", [
+            "  would regenerate %s — it names a cache path (not %s) that no longer matches "
+            "this install, likely left over from a marketplace rename." % (LAUNCHER, want)]
+    install()
+    return "healed", [
+        "  ✅ %s regenerated for the current install (%s) — it was naming a stale cache path, "
+        "left over from a marketplace rename." % (LAUNCHER, want)]
 
 
 if __name__ == "__main__":

@@ -1400,7 +1400,7 @@ def main():
     #
     # It showed "🔧 Open — mine to fix": engine and tooling items the search had noticed. Those
     # belong to the plugin that owns the engine, and are filed as GitHub issues via
-    # `careers-plugins/scripts/intake.py`. A capability's defects belong on that capability's
+    # `marketplace-dev/scripts/intake.py`. A capability's defects belong on that capability's
     # tracker, not duplicated in every profile that uses it.
     #
     # Only the "Needs the candidate" group survives, rendered on Your Move as the "System &

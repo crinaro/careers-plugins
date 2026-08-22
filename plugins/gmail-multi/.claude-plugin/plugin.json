@@ -1,12 +1,12 @@
 {
   "name": "gmail-multi",
   "description": "Search, read, and draft across SEVERAL Gmail accounts at once — the managed Gmail connector binds to one account; this one covers them all in a single query, tags every result with its mailbox, fetches attachments, and creates drafts it structurally cannot send. Standalone: configure accounts with its own /gmail-multi:accounts command; app passwords stay in the OS credential store and are never seen by Claude. Use it whenever mail spans more than one Google account.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Crinaro",
     "email": "john@crinaro.ai"
   },
-  "repository": "https://github.com/crinaro/careers-plugins",
+  "repository": "https://github.com/crinaro/marketplace",
   "license": "Apache-2.0",
   "keywords": [
     "gmail",

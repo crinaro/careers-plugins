@@ -1,7 +1,7 @@
 {
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
-  "name": "careers-plugins",
-  "description": "Career and job-search capabilities for Claude Code. Tools that help a person find their next role, and help a small agency support several people doing the same.",
+  "name": "crinaro-marketplace",
+  "description": "General-purpose Claude Code plugins from Crinaro — not pinned to one vertical. Currently: a job-search assistant that helps a person find their next role (and a small agency support several people doing the same), and a connector for working across several Gmail accounts at once.",
   "owner": {
     "name": "Crinaro",
     "email": "john@crinaro.ai"

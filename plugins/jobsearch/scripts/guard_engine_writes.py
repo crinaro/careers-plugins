@@ -14,7 +14,7 @@ the split exists to prevent, and a behavioural rule alone does not survive a ses
 mid-task and confident.
 
     The rule: work on the engine happens in the ENGINE session. A search session that finds an
-    engine bug ROUTES it — `careers-plugins/scripts/intake.py` — and carries on searching.
+    engine bug ROUTES it — `marketplace-dev/scripts/intake.py` — and carries on searching.
 
 ⚠️ THIS IS A GUARD, NOT A SANDBOX. It matches Write/Edit-family tools. A determined session with
 shell access can still write a file, exactly as the push-token hook could always be bypassed by

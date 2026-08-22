@@ -143,7 +143,7 @@ cannot see the scheduler; you can see the scheduler and must not trust it by its
 — **dispatch the agent, do not hand-build a `report_issue.py` command.** That agent checks the tracker
 for an existing issue first, and a second issue for a known defect splits the discussion across
 two threads where neither has the whole picture.
-`~/.claude/jobsearch/run` — and `python3 <careers-plugins>/plugins/jobsearch/scripts/_diag.py`'s
+`~/.claude/jobsearch/run` — and `python3 <marketplace-dev>/plugins/jobsearch/scripts/_diag.py`'s
 log at `.jobsearch/diagnostics.log` inside the profile (dev #151; profile-less sessions fall back to `~/.claude/jobsearch/diagnostics.log`) — record what the machinery decided; that log carries
 no personal data, so it can be pasted into an issue as-is.
 
@@ -271,7 +271,7 @@ missing, a gate is broken — **do not fix it here.** Route it to the marketplac
 
 ⚠️ **State the bug as the RULE that misbehaved, never the instance.** That submission crosses into
 a repo gated at zero personal data, and it refuses a currency figure, an address or a name — git
-history is permanent. Full protocol: `careers-plugins/docs/intake.md`.
+history is permanent. Full protocol: `marketplace-dev/docs/intake.md`.
 
 ## 5. RECORD — ⭐ BEFORE YOU GO QUIET, PUBLISH. This session had no publish step at all.
 
